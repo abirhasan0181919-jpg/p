@@ -54,6 +54,7 @@
           
           <div class="login-footer">
             <p>Live Fruit Juice Billing System v2.0</p>
+            <a href="#" id="setup-link" class="setup-link">সাপ্লাবেস সেটআপ পরিবর্তন করুন</a>
           </div>
         </div>
       </div>
@@ -206,6 +207,9 @@
               </div>
 
               <button type="submit" class="btn btn-primary btn-block">সেভ করুন</button>
+              <button type="button" id="setup-open" class="btn btn-secondary btn-block" style="margin-top:8px;">
+                Supabase তথ্য পরিবর্তন করুন
+              </button>
             </form>
             
             <div id="settings-message" class="settings-message hidden"></div>
@@ -215,6 +219,49 @@
 
       <!-- Overlay for mobile sidebar -->
       <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+    </div>
+
+    <!-- ========== FIRST-RUN SETUP (Supabase config) ========== -->
+    <div id="setup-page" class="page">
+      <div class="login-container">
+        <div class="login-card" style="max-width: 520px;">
+          <div class="logo-section">
+            <div class="logo-icon">🔧</div>
+            <h1 class="shop-name"><span class="text-green">Live</span> Fruit Juice</h1>
+            <p class="tagline">প্রথমবার সেটআপ — Supabase তথ্য দিন</p>
+          </div>
+
+          <div class="setup-note">
+            Supabase → <b>Project Settings → API</b> থেকে <b>Project URL</b> ও
+            <b>anon public key</b> কপি করে নিচে বসান। একবার সেভ করলেই আর লাগবে না।
+          </div>
+
+          <form id="setup-form" class="login-form">
+            <div class="form-group">
+              <label for="setup-url">Supabase Project URL</label>
+              <div class="input-wrapper">
+                <span class="input-icon">🔗</span>
+                <input type="url" id="setup-url" placeholder="https://xxxxxxxxxxxx.supabase.co" required>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="setup-key">anon / public key</label>
+              <div class="input-wrapper">
+                <span class="input-icon">🗝️</span>
+                <input type="text" id="setup-key" placeholder="eyJhbGciOi..." required>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">সেভ করে চালু করুন</button>
+            <button type="button" id="setup-reset" class="btn btn-secondary btn-block" style="margin-top:8px;">
+              আবার শুরু করুন
+            </button>
+          </form>
+
+          <div id="setup-error" class="error-message hidden"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ========== PRINT RECEIPT PAGE ========== -->

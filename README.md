@@ -37,23 +37,35 @@ Supabase Dashboard → **SQL Editor** → **New query** → `supabase-setup.sql`
 - ডিফল্ট ওনার: **`owner` / `owner123`**
 - কিছু স্যাম্পল প্রোডাক্ট (না চাইলে মুছে দিন)
 
-### ধাপ ২ — Supabase URL ও Key বসান
+### ধাপ ২ — Vercel-এ ডিপ্লয়
 
-Dashboard → **Project Settings** → **API**
+এই ফোল্ডারটি টার্মিনালে ওপেন করে:
 
-`config.js` ফাইলে বসান:
-
-```js
-window.SUPABASE_CONFIG = {
-  url: "https://xxxxxxxxxxxx.supabase.co",
-  anonKey: "eyJhbGciOi...",
-};
+```bash
+npm i -g vercel
+vercel login
+vercel --prod
 ```
 
-### ধাপ ৩ — চালু করুন
+প্রথমবার জিজ্ঞেস করবে — হ্যাঁ (Yes) দিন। শেষে একটা লিংক দেবে, যেমন
+`https://live-fruit-juice.vercel.app`।
 
-`index.html` ফাইলটি ব্রাউজারে খুললেই হবে। লাইভ করতে চাইলে যেকোনো
-static host-এ (Netlify, Vercel, GitHub Pages, cPanel) আপলোড করুন।
+### ধাপ ৩ — অ্যাপে Supabase তথ্য দিন
+
+লিংকে যান — **একটা সেটআপ স্ক্রিন আসবে**। সেখানে বসান:
+
+- **Project URL** — Supabase → Project Settings → API
+- **anon public key** — একই পেজ থেকে
+
+সেভ করলেই অ্যাপ চালু। তথ্য ফোনের মধ্যেই সেভ থাকে, পরে আর ডিপ্লয় লাগবে না।
+
+<details>
+<summary><b>বিকল্প: config.js-এ সরাসরি বসাতে চাইলে</b></summary>
+
+`config.js` ফাইলে URL ও key বসিয়ে আবার `vercel --prod` চালান।
+তাহলে সেটআপ স্ক্রিন আর দেখাবে না — সব ডিভাইসে কাজ করবে।
+</details>
+
 
 ---
 
@@ -109,7 +121,8 @@ TOTAL              ৳310
 
 ```
 index.html            সব পেজের মার্কআপ
-config.js             ← Supabase URL ও Key এখানে
+vercel.json           Vercel কনফিগ
+config.js             Supabase URL/Key (ঐচ্ছিক — সেটআপ স্ক্রিনও কাজ করে)
 manifest.json         PWA
 supabase-setup.sql    ডেটাবেস সেটআপ (একবার চালাতে হবে)
 css/style.css         স্টাইল, ডার্ক মোড, রেসপন্সিভ, প্রিন্ট স্টাইল
@@ -129,15 +142,26 @@ js/app.js             সব লজিক (অথ, কার্ট, ইনভয
 
 ## ট্রাবলশুটিং
 
-**"সাপ্লাবেস কনফিগারেশন পাওয়া যায়নি"**
-→ `config.js`-এ URL ও Key বসানো হয়নি, অথবা ফাইলটি আপলোড করা হয়নি।
+**সেটআপ স্ক্রিন আসছে, লগইন করতে পারছি না**
+→ অ্যাপে Supabase তথ্য এখনো দেওয়া হয়নি। লিংকে গিয়ে URL ও anon key দিন।
 
-**লগইনে সমস্যা, কিন্তু কোনো এরর নেই**
-→ SQL Editor-এ `login_employee` ফাংশনটি তৈরি হয়েছে কিনা দেখুন।
+**সেটআপ স্ক্রিনের পরও সেটআপ স্ক্রিন আসছে**
+→ ব্রাউজারে localStorage ক্লিয়ার করুন, অথবা সেটিংস থেকে "আবার শুরু করুন" চাপুন।
+
+**"সাপ্লাবেস কনফিগারেশন পাওয়া যায়নি"**
+→ `config.js`-এ URL ও Key নেই, অথবা ফাইলটি আপলোড করা হয়নি।
+
+**লগইন করলেই লগআউট হয়ে যাচ্ছে / কোনো এরর নেই**
+→ Supabase → Authentication → **Authentication** চালু আছে কিনা দেখুন।
+→ SQL Editor-এ `login_employee` ফাংশন তৈরি হয়েছে কিনা দেখুন।
 
 **পণ্য আপডেট হচ্ছে না (Realtime)**
 → `supabase-setup.sql`-এর ধাপ ২ চালান, অথবা Database → Replication →
    `supabase_realtime` পাব্লিকেশনে `products` টেবিলটি যোগ করুন।
+
+**নতুন স্টাফ লগইন করতে পারছে না**
+→ `password_hash` কমান দিয়ে তৈরি হতে হবে:
+   `encode(digest('livefruitjuice_salt_পাসওয়ার্ড','sha256'),'hex')`
 
 **প্রিন্টে পেজের বাকি অংশও আসছে**
 → ব্রাউজারের প্রিন্ট ডায়ালগে "Paper size" 58mm বা "Custom" সিলেক্ট করুন।

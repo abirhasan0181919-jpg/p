@@ -174,11 +174,11 @@
 
   /* ---------------- SUPABASE ---------------- */
   function readConfig() {
-    const cfg = (window.SUPABASE_CONFIG || {});
+    const cfg = window.SUPABASE_CONFIG || {};
     const params = new URLSearchParams(location.search);
     let url = (cfg.url || params.get("supabase_url") || "").trim();
     let key = (cfg.anonKey || cfg.key || params.get("supabase_key") || "").trim();
-    // localStorage override (set once, survives edits)
+    // runtime override saved from the in-app setup screen (wins over config.js)
     try {
       const saved = JSON.parse(localStorage.getItem("lfj_supabase") || "null");
       if (saved && saved.url && saved.key) {
@@ -186,12 +186,13 @@
         key = saved.key;
       }
     } catch (e) {}
-    return { url, key };
+    const isPlaceholder = PLACEHOLDER.test(url) || PLACEHOLDER.test(key);
+    return { url, key, isPlaceholder };
   }
 
   function initSupabase() {
-    const { url, key } = readConfig();
-    if (!url || !key) {
+    const { url, key, isPlaceholder } = readConfig();
+    if (!url || !key || isPlaceholder) {
       state.missingConfig = true;
       return;
     }
@@ -202,6 +203,46 @@
       console.error("Supabase init failed", e);
       state.missingConfig = true;
     }
+  }
+
+  /* ---------------- FIRST-RUN SETUP ---------------- */
+  const PLACEHOLDER = /YOUR-PROJECT-REF|YOUR-ANON-PUBLIC-KEY/;
+
+  function saveSupabaseConfig(url, key) {
+    try {
+      localStorage.setItem("lfj_supabase", JSON.stringify({ url, key }));
+    } catch (e) {}
+  }
+
+  function handleSetupSave(e) {
+    e.preventDefault();
+    const err = $("#setup-error");
+    const url = $("#setup-url").value.trim().replace(/\/+$/, "");
+    const key = $("#setup-key").value.trim();
+
+    err.classList.add("hidden");
+
+    if (!/^https:\/\/.+\.supabase\.(co|in)$/i.test(url)) {
+      err.textContent = "সঠিক Supabase URL দিন (যেমন https://xxxx.supabase.co)";
+      err.classList.remove("hidden");
+      return;
+    }
+    if (key.length < 20) {
+      err.textContent = "anon key ঠিক মনে হচ্ছে না — সম্পূর্ণ key টি কপি করুন";
+      err.classList.remove("hidden");
+      return;
+    }
+
+    saveSupabaseConfig(url, key);
+    toast("সেটআপ সেভ হয়েছে, অ্যাপ চালু হচ্ছে...", "success");
+    setTimeout(() => location.reload(), 600);
+  }
+
+  function openSetup() {
+    const { url, key } = readConfig();
+    $("#setup-url").value = url && !PLACEHOLDER.test(url) ? url : "";
+    $("#setup-key").value = key && !PLACEHOLDER.test(key) ? key : "";
+    showPage("setup-page");
   }
 
   async function q(builder) {
@@ -900,6 +941,18 @@
   function wire() {
     $("#login-form").addEventListener("submit", handleLogin);
 
+    $("#setup-form").addEventListener("submit", handleSetupSave);
+    $("#setup-reset").addEventListener("click", () => {
+      try {
+        localStorage.removeItem("lfj_supabase");
+      } catch (e) {}
+      location.reload();
+    });
+    $("#setup-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      openSetup();
+    });
+
     $$(".toggle-password").forEach((b) =>
       b.addEventListener("click", () => {
         const inp = $("#password");
@@ -965,6 +1018,7 @@
     });
 
     $("#settings-form").addEventListener("submit", saveSettingsForm);
+    $("#setup-open").addEventListener("click", openSetup);
 
     // keyboard shortcuts (desktop)
     document.addEventListener("keydown", (e) => {
@@ -1018,6 +1072,12 @@
     injectIcons();
     renderProducts();
     renderCart();
+
+    // no Supabase config yet -> first-run setup screen
+    if (state.missingConfig) {
+      openSetup();
+      return;
+    }
 
     if (restoreSession()) {
       enterApp().catch((e) => {
