@@ -76,7 +76,7 @@
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary btn-block">
+          <button type="submit" class="btn btn-primary btn-block" id="login-btn">
             <span>লগইন করুন</span>
           </button>
         </form>
@@ -99,6 +99,7 @@
         <h1 class="shop-title"><span class="text-green">Live</span> Fruit Juice</h1>
       </div>
       <div class="top-bar-right">
+        <span id="sync-status" class="sync-badge" hidden></span>
         <span id="current-user" class="user-badge"></span>
         <button id="logout-btn" class="icon-btn" data-icon="logout" aria-label="লগ আউট"></button>
       </div>
@@ -362,6 +363,7 @@
   <div id="toast-container" class="toast-container"></div>
 </div>
 
+<script src="js/api.js"></script>
 <script src="js/store.js"></script>
 <script src="js/app.js"></script>
 </body>

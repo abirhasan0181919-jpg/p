@@ -1,109 +1,59 @@
 /* ==========================================================
-   Live Fruit Juice — Store
-   The whole database is ONE JSON object kept in the browser.
-   No server. No external service.
+   Live Fruit Juice — Store (server backed)
+   ------------------------------------------------------------
+   The shop's real data lives on the server (Vercel KV). This file
+   keeps a mirror of it in memory and a copy in localStorage so the
+   screen paints instantly and stays readable if the network drops.
+
+     server  = the truth (every bill, price and password)
+     memory  = what the UI renders
+     localStorage = cache + the queue of bills not yet uploaded
+
+   Bills are the one thing that may be recorded while offline, so a
+   dead connection never stops the till. Each queued bill carries a
+   client_id, which makes the upload idempotent: retrying can never
+   create the same sale twice.
    ========================================================== */
 
 (function (global) {
   "use strict";
 
-  const KEY = "lfj_db_v1";
-  const SNAP_KEY = "lfj_snapshots_v1";
+  const API = global.API;
+
+  const KEY = "lfj_cache_v1";         // cached mirror of the server data
+  const QUEUE_KEY = "lfj_queue_v1";   // bills taken while offline
+  const TEMP_KEY = "lfj_temp_seq_v1"; // counter for provisional bill numbers
+  const SESSION_KEY = "lfj_session_v1"; // hint only; the cookie is the truth
   const MARK_KEY = "lfj_last_export_v1";
-  const SALT = "livefruitjuice_salt_";
-  const SESSION_KEY = "lfj_session_v1";
+  const LEGACY_KEY = "lfj_db_v1";     // data from the old local-only version
+  const MIGRATED_KEY = "lfj_migrated_v1";
 
-  /* rolling safety snapshots — kept separately so a corrupt/cleared main
-     database can still be recovered from inside the app */
+  const SNAP_KEY = "lfj_snapshots_v1";
   const MAX_SNAPSHOTS = 5;
-  const SNAPSHOT_MIN_INTERVAL = 60 * 1000;      // at most one per minute
-  const MAX_TOTAL_BACKUP_BYTES = 2 * 1024 * 1024; // leave room in the ~5MB quota
+  const SNAPSHOT_MIN_INTERVAL = 60 * 1000;
+  const MAX_TOTAL_BACKUP_BYTES = 2 * 1024 * 1024;
 
-  /* ---------- SHA-256 (sync, works on file:// too) ---------- */
-  function utf8(str) {
-    return unescape(encodeURIComponent(String(str)));
-  }
+  const MAX_QUEUE = 500; // a hard stop so a long outage cannot eat the storage
 
-  function sha256(str) {
-    function rr(v, a) { return (v >>> a) | (v << (32 - a)); }
-    const maxWord = Math.pow(2, 32);
-    const L = "length";
-    let i, j, result = "";
-    const words = [];
-    const ascii = utf8(str);
-    const bitLen = ascii[L] * 8;
+  /* ---------- small helpers ---------- */
 
-    const hash = [], k = [];
-    let prime = 0;
-    const composite = {};
-    for (let c = 2; prime < 64; c++) {
-      if (!composite[c]) {
-        for (i = 0; i < 313; i += c) composite[i] = c;
-        hash[prime] = (Math.pow(c, 0.5) * maxWord) | 0;
-        k[prime++] = (Math.pow(c, 1 / 3) * maxWord) | 0;
-      }
-    }
-
-    const bytes = ascii + "\x80";
-    let padded = bytes;
-    while (padded[L] % 64 - 56) padded += "\x00";
-
-    for (i = 0; i < padded[L]; i++) {
-      const code = padded.charCodeAt(i);
-      if (code >> 8) throw new Error("sha256: invalid input");
-      words[i >> 2] |= code << ((3 - i) % 4) * 8;
-    }
-    words[words[L]] = (bitLen / maxWord) | 0;
-    words[words[L]] = bitLen;
-
-    for (j = 0; j < words[L];) {
-      const w = words.slice(j, (j += 16));
-      const oldHash = hash.slice(0);
-      hash.length = 8;
-
-      for (i = 0; i < 64; i++) {
-        const w15 = w[i - 15], w2 = w[i - 2];
-        const a = hash[0], e = hash[4];
-        const t1 =
-          hash[7] +
-          (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) +
-          ((e & hash[5]) ^ (~e & hash[6])) +
-          k[i] +
-          (w[i] =
-            i < 16
-              ? w[i]
-              : (w[i - 16] +
-                  (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) +
-                  w[i - 7] +
-                  (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
-        const t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
-        hash.unshift((t1 + t2) | 0);
-        hash[4] = (hash[4] + t1) | 0;
-      }
-      for (i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
-    }
-
-    for (i = 0; i < 8; i++) {
-      for (j = 3; j + 1; j--) {
-        const b = (hash[i] >> (j * 8)) & 255;
-        result += (b < 16 ? "0" : "") + b.toString(16);
-      }
-    }
-    return result;
-  }
-
-  const hashPassword = (pw) => sha256(SALT + pw).toLowerCase();
-
-  /* ---------- helpers ---------- */
-  const uid = () =>
-    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+  function uid() {
+    if (global.crypto && global.crypto.randomUUID) return global.crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0;
       return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
     });
+  }
 
   const p2 = (n) => String(n).padStart(2, "0");
   const todayStr = (d = new Date()) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   const nowTime = (d = new Date()) => `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+
+  function num(v) {
+    const n = Number(v);
+    return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  }
+  const nonNeg = (v) => Math.max(0, num(v));
 
   const DEFAULT_SETTINGS = {
     shop_name: "Live Fruit Juice",
@@ -113,129 +63,13 @@
     show_thankyou: true,
   };
 
-  function freshDB() {
-    return {
-      version: 1,
-      created_at: new Date().toISOString(),
-      settings: { ...DEFAULT_SETTINGS },
-      employees: [
-        {
-          id: uid(),
-          username: "owner",
-          password_hash: hashPassword("owner123"),
-          role: "owner",
-          active: true,
-          created_at: new Date().toISOString(),
-        },
-      ],
-      products: [
-        { id: uid(), name: "আপেল জুস", price_s: 50, price_m: 80, price_l: 120 },
-        { id: uid(), name: "কলা জুস", price_s: 60, price_m: 90, price_l: 130 },
-        { id: uid(), name: "আরবুজ মিশ্র জুস", price_s: 70, price_m: 100, price_l: 150 },
-        { id: uid(), name: "পেয়ারা জুস", price_s: 65, price_m: 95, price_l: 140 },
-        { id: uid(), name: "অ্যানারস জুস", price_s: 80, price_m: 120, price_l: 170 },
-        { id: uid(), name: "পান্তা লেমন জুস", price_s: 40, price_m: 60, price_l: 90 },
-      ],
-      invoices: [],
-      invoice_items: [],
-    };
-  }
+  /* ---------- state ---------- */
 
-  /* ---------- validation for imported files ---------- */
-  function normalise(obj, strict) {
-    if (!obj || typeof obj !== "object") throw new Error("ফাইলটি বৈধ নয়");
-
-    // when importing a backup we refuse anything that is not really a backup,
-    // otherwise a wrong file would silently wipe the shop's data
-    if (strict) {
-      if (!Array.isArray(obj.employees)) throw new Error("ফাইলে স্টাফের তালিকা নেই — সম্ভবত সঠিক ব্যাকআপ নয়");
-      if (!obj.employees.length) throw new Error("ফাইলে কোনো স্টাফ নেই");
-      const bad = obj.employees.find((e) => !e || !e.username || !e.password_hash);
-      if (bad) throw new Error("ফাইলের স্টাফ তথ্য অসম্পূর্ণ");
-    }
-
-    const out = freshDB();
-    out.version = 1;
-    // a restore should be a true restore, so keep the original creation time
-    if (obj.created_at) out.created_at = String(obj.created_at);
-    if (obj.settings && typeof obj.settings === "object")
-      out.settings = { ...DEFAULT_SETTINGS, ...pickStrings(obj.settings) };
-    if (Array.isArray(obj.employees) && obj.employees.length)
-      out.employees = obj.employees
-        .filter((e) => e && e.username && e.password_hash)
-        .map((e) => ({
-          id: e.id || uid(),
-          username: String(e.username).slice(0, 40),
-          password_hash: String(e.password_hash).toLowerCase(),
-          role: e.role === "owner" ? "owner" : "staff",
-          active: e.active !== false,
-          created_at: e.created_at || new Date().toISOString(),
-        }));
-    if (Array.isArray(obj.products))
-      out.products = obj.products
-        .filter((p) => p && p.name)
-        .map((p) => ({
-          id: p.id || uid(),
-          name: String(p.name).slice(0, 120),
-          price_s: nonNeg(p.price_s),
-          price_m: nonNeg(p.price_m),
-          price_l: nonNeg(p.price_l),
-          updated_at: p.updated_at || new Date().toISOString(),
-        }));
-    if (Array.isArray(obj.invoices))
-      out.invoices = obj.invoices
-        .filter((r) => r && r.invoice_no)
-        .map((r) => ({
-          invoice_no: String(r.invoice_no),
-          date_disp: String(r.date_disp || ""),
-          time_disp: String(r.time_disp || ""),
-          customer: String(r.customer || "Walk-in Customer").slice(0, 120),
-          seller: String(r.seller || ""),
-          total: nonNeg(r.total),
-          paid: nonNeg(r.paid),
-          change: num(r.change),
-          created_at: r.created_at || new Date().toISOString(),
-        }));
-    if (Array.isArray(obj.invoice_items))
-      out.invoice_items = obj.invoice_items
-        .filter((i) => i && i.invoice_no)
-        .map((i, idx) => ({
-          id: i.id || uid(),
-          invoice_no: String(i.invoice_no),
-          seq: typeof i.seq === "number" ? i.seq : idx,
-          item: String(i.item || "").slice(0, 120),
-          size: String(i.size || "").slice(0, 10),
-          qty: nonNeg(i.qty) || 1,
-          price: nonNeg(i.price),
-        }));
-
-    if (!out.employees.length) throw new Error("ফাইলে কোনো স্টাফ নেই");
-    return out;
-  }
-
-  function num(v) {
-    const n = Number(v);
-    return isFinite(n) ? Math.round(n * 100) / 100 : 0;
-  }
-
-  /** prices and quantities can never be negative */
-  function nonNeg(v) {
-    return Math.max(0, num(v));
-  }
-  function pickStrings(o) {
-    const r = {};
-    ["shop_name", "shop_address", "shop_phone"].forEach((k) => {
-      if (typeof o[k] === "string") r[k] = o[k];
-    });
-    if (typeof o.auto_print === "boolean") r.auto_print = o.auto_print;
-    if (typeof o.show_thankyou === "boolean") r.show_thankyou = o.show_thankyou;
-    return r;
-  }
-
-  /* ---------- the store ---------- */
   let db = null;
-  // set when load() had to repair the data, so the UI can tell the user
-  let recovery = null;
+  let user = null;            // {username, role} — from the server
+  let online = true;
+  let syncing = false;
+  let lastSyncError = null;
   const listeners = new Set();
 
   function notify(reason) {
@@ -243,143 +77,329 @@
       try { fn(reason); } catch (e) { console.error(e); }
     });
   }
-
   function onChange(fn) {
     listeners.add(fn);
     return () => listeners.delete(fn);
   }
 
-  function load() {
-    let raw = null;
-    try { raw = localStorage.getItem(KEY); } catch (e) {}
-    recovery = null;
-    if (raw) {
-      try {
-        db = normalise(JSON.parse(raw));
-        // a corrupt read is recoverable: fall back to the newest snapshot
-        if (!db) throw new Error("unreadable");
-      } catch (e) {
-        console.error("ডেটা পড়া যায়নি, স্ন্যাপশট থেকে ফিরিয়ে নেওয়ার চেষ্টা:", e.message);
-        const list = readSnapshots();
-        let recovered = null;
-        for (const s of list) {
-          try { recovered = normalise(JSON.parse(s.data)); break; } catch (e2) {}
-        }
-        if (recovered) {
-          db = recovered;
-          persist();
-          recovery = { invoices: db.invoices.length, from: "snapshot" };
-          notify("recovered");
-        } else {
-          db = freshDB();
-          persist();
-        }
-      }
-    } else {
-      // nothing in the main key — do not silently start empty if we can recover
-      const list = readSnapshots();
-      let recovered = null;
-      for (const s of list) {
-        try { recovered = normalise(JSON.parse(s.data)); break; } catch (e) {}
-      }
-      if (recovered) {
-        db = recovered;
-        persist();
-        recovery = { invoices: db.invoices.length, from: "snapshot" };
-        notify("recovered");
-      } else {
-        db = freshDB();
-        persist();
+  function emptyDB() {
+    return {
+      version: 2,
+      created_at: new Date().toISOString(),
+      settings: { ...DEFAULT_SETTINGS },
+      employees: [],
+      products: [],
+      invoices: [],
+      invoice_items: [],
+    };
+  }
+
+  /** turn a server payload into the flat shape the UI already uses */
+  function hydrate(payload) {
+    const next = emptyDB();
+    next.settings = { ...DEFAULT_SETTINGS, ...(payload.settings || {}) };
+    next.products = Array.isArray(payload.products) ? payload.products : [];
+    next.employees = Array.isArray(payload.staff) ? payload.staff : [];
+    for (const inv of payload.invoices || []) {
+      next.invoices.push({
+        invoice_no: inv.invoice_no,
+        date_disp: inv.date_disp,
+        time_disp: inv.time_disp,
+        customer: inv.customer,
+        seller: inv.seller,
+        total: nonNeg(inv.total),
+        paid: nonNeg(inv.paid),
+        change: num(inv.change),
+        created_at: inv.created_at,
+        pending: false,
+      });
+      for (const it of inv.items || []) {
+        next.invoice_items.push({
+          id: it.id || uid(),
+          invoice_no: inv.invoice_no,
+          seq: it.seq || 0,
+          item: it.item,
+          size: it.size,
+          qty: it.qty,
+          price: nonNeg(it.price),
+        });
       }
     }
-    return db;
+    return next;
+  }
+
+  /**
+   * The cache is written in exactly the same shape the server sends, so what is
+   * read back is hydrated by the same code path — one shape, no surprises.
+   * Bills still waiting to be uploaded are left out: the queue owns them, and
+   * keeping them here too would list every pending bill twice.
+   */
+  function toCache() {
+    const queued = new Set(readQueue().map((e) => e.invoice_no));
+    const byNo = new Map();
+    for (const it of db.invoice_items || []) {
+      if (!byNo.has(it.invoice_no)) byNo.set(it.invoice_no, []);
+      byNo.get(it.invoice_no).push({
+        seq: it.seq, item: it.item, size: it.size, qty: it.qty, price: it.price,
+      });
+    }
+    return {
+      settings: db.settings,
+      products: db.products,
+      staff: db.employees,
+      invoices: (db.invoices || [])
+        .filter((inv) => !inv.pending && !queued.has(inv.invoice_no))
+        .map((inv) => ({ ...inv, items: byNo.get(inv.invoice_no) || [] })),
+    };
   }
 
   function persist() {
+    if (!db) return true;
     try {
-      localStorage.setItem(KEY, JSON.stringify(db));
+      localStorage.setItem(KEY, JSON.stringify(toCache()));
       return true;
     } catch (e) {
       const quota = e && /quota|exceed/i.test(e.name + e.message);
-      if (!quota) {
-        throw new Error("সেভ করা যায়নি (ব্রাউজারের স্টোরেজ বন্ধ থাকতে পারে)");
+      if (quota) {
+        // the cache is disposable — the server has the real data
+        try { localStorage.removeItem(KEY); } catch (e2) {}
+        return false;
       }
-      // out of room: drop the safety copies first and try once more, because
-      // losing a snapshot is far better than losing a sale
-      try { clearSnapshots(); } catch (e2) {}
-      try {
-        localStorage.setItem(KEY, JSON.stringify(db));
-        return true;
-      } catch (e2) {
-        throw new Error(
-          "স্টোরেজ পূর্ণ — ব্যাকআপ ফাইল নিয়ে পুরনো বিল ডিউলেট করুন"
-        );
+      return false;
+    }
+  }
+
+  /* ---------- offline queue ---------- */
+
+  function readQueue() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+  function writeQueue(list) {
+    try {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(list.slice(-MAX_QUEUE)));
+      return true;
+    } catch (e) {
+      // out of room: keep the cache small so the queue survives
+      try { localStorage.removeItem(KEY); } catch (e2) {}
+      try { localStorage.setItem(QUEUE_KEY, JSON.stringify(list.slice(-50))); return true; }
+      catch (e2) { return false; }
+    }
+  }
+
+  const pendingCount = () => readQueue().length;
+  const isOnline = () => online;
+  const statusError = () => lastSyncError;
+
+  function setOnline(v) {
+    if (online === v) return;
+    online = v;
+    notify("connection");
+  }
+
+  /* ---------- loading ---------- */
+
+  /** paint from the cache straight away; the server refresh follows */
+  function load() {
+    let raw = null;
+    try { raw = localStorage.getItem(KEY); } catch (e) {}
+    try {
+      db = raw ? hydrate(JSON.parse(raw)) : emptyDB();
+    } catch (e) {
+      db = emptyDB();
+    }
+    mergeQueue();
+    return db;
+  }
+
+  const get = () => db || load();
+
+  /** queued bills are shown alongside the server's, flagged as not yet uploaded */
+  function mergeQueue() {
+    if (!db) return;
+    const have = new Set(db.invoices.map((i) => i.invoice_no));
+    for (const entry of readQueue()) {
+      if (have.has(entry.invoice_no)) continue;
+      db.invoices.push(entry.invoice);
+      for (const it of entry.invoice.items || []) {
+        db.invoice_items.push({ id: it.id || uid(), invoice_no: entry.invoice_no, seq: it.seq, ...it });
       }
     }
   }
 
-  /** read-only accessor */
-  const get = () => db || load();
+  /** queue entries look like {client_id, invoice:{invoice_no,...}, at} */
+  function dropFromQueue(invoiceNo) {
+    writeQueue(readQueue().filter((e) => e.invoice.invoice_no !== invoiceNo));
+  }
 
-  function commit(reason, force, undo) {
-    try {
-      persist();
-    } catch (e) {
-      // the write failed, so undo the in-memory change too — otherwise memory
-      // and storage disagree and the row reappears on the next successful save
-      try { if (undo) undo(); } catch (e2) {}
-      throw e;
-    }
-    // safety copy first — if persist() throws we must not have lost the old one
-    try { takeSnapshot(reason, force); } catch (e) {}
-    notify(reason || "change");
-    // keep other tabs of the same device in sync
-    try {
-      if (global.BroadcastChannel) {
-        if (!global.__lfjBC) global.__lfjBC = new BroadcastChannel("lfj-db");
-        global.__lfjBC.postMessage({ reason });
+  /**
+   * Push every queued bill to the server, oldest first.
+   * Each carries its client_id, so a bill that actually arrived before the
+   * connection dropped is recognised and not stored twice.
+   */
+  async function flushQueue() {
+    const queue = readQueue();
+    if (!queue.length) return { sent: 0, failed: 0 };
+
+    let sent = 0, failed = 0;
+    const keep = [];
+    for (const entry of queue) {
+      try {
+        const saved = await API.createInvoice({
+          customer: entry.invoice.customer,
+          paid: entry.invoice.paid,
+          client_id: entry.client_id,
+          lines: entry.invoice.items.map((it) => ({
+            item: it.item, size: it.size, qty: it.qty, price: it.price,
+          })),
+        });
+        sent++;
+        // swap the provisional number for the real one
+        replaceInvoice(entry.invoice.invoice_no, saved);
+        dropFromQueue(entry.invoice.invoice_no);
+      } catch (e) {
+        if (e && e.offline) {
+          failed++;
+          keep.push(entry);   // still no connection, try again later
+        } else {
+          // the server refused it for good (bad product, no permission...)
+          failed++;
+          dropFromQueue(entry.invoice.invoice_no);
+          console.error("[store] queued bill rejected", entry.invoice.invoice_no, e.message);
+        }
       }
-    } catch (e) {}
+    }
+    if (keep.length) writeQueue(keep);
+    else writeQueue([]);
+    if (sent) {
+      setOnline(true);
+      takeSnapshot("sync", true);
+      notify("invoices");
+    }
+    return { sent, failed };
+  }
+
+  function replaceInvoice(oldNo, saved) {
+    if (!db) return;
+    db.invoice_items = db.invoice_items.filter((i) => i.invoice_no !== oldNo);
+    db.invoices = db.invoices.filter((i) => i.invoice_no !== oldNo);
+    db.invoices.push({
+      invoice_no: saved.invoice_no,
+      date_disp: saved.date_disp,
+      time_disp: saved.time_disp,
+      customer: saved.customer,
+      seller: saved.seller,
+      total: nonNeg(saved.total),
+      paid: nonNeg(saved.paid),
+      change: num(saved.change),
+      created_at: saved.created_at,
+      pending: false,
+    });
+    for (const it of saved.items || []) {
+      db.invoice_items.push({
+        id: it.id || uid(), invoice_no: saved.invoice_no, seq: it.seq,
+        item: it.item, size: it.size, qty: it.qty, price: nonNeg(it.price),
+      });
+    }
+    persist();
   }
 
   /* ---------- auth ---------- */
-  function login(username, password) {
-    const u = String(username || "").trim();
-    if (!u || !password) return null;
-    const emp = get().employees.find(
-      (e) => e.username.toLowerCase() === u.toLowerCase() && e.active !== false
-    );
-    if (!emp) return null;
-    if (emp.password_hash.toLowerCase() !== hashPassword(password)) return null;
-    return { username: emp.username, role: emp.role === "owner" ? "owner" : "staff" };
+
+  /** ask the server who we are; the cookie decides, not local storage */
+  async function me() {
+    try {
+      const res = await API.me();
+      user = res && res.user ? res.user : null;
+      setOnline(true);
+      lastSyncError = null;
+    } catch (e) {
+      if (e && e.offline) {
+        setOnline(false);
+        // offline: keep whoever we were, the server will confirm later
+        user = user || readSession();
+      } else {
+        user = null;
+        lastSyncError = e.message;
+      }
+    }
+    if (user) await sync();
+    return user;
   }
 
-  function saveSession(user) {
+  async function login(username, password) {
+    const res = await API.login(username, password); // throws with a real message
+    user = res.user;
+    setOnline(true);
+    lastSyncError = null;
+    saveSession(user);
+    await sync();
+    return user;
+  }
+
+  async function logout() {
+    try { await API.logout(); } catch (e) { /* the cookie dies server-side anyway */ }
+    user = null;
+    saveSession(null);
+    db = null;
+    notify("logout");
+  }
+
+  /** a local hint only — never trusted for permissions */
+  function saveSession(u) {
     try {
-      if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      if (u) localStorage.setItem(SESSION_KEY, JSON.stringify(u));
       else localStorage.removeItem(SESSION_KEY);
     } catch (e) {}
   }
   function readSession() {
     try {
       const s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
-      if (s && s.username) {
-        const emp = get().employees.find((e) => e.username === s.username && e.active !== false);
-        // if the account was deleted/disabled, the session is dead
-        if (!emp) { saveSession(null); return null; }
-        return { username: emp.username, role: emp.role === "owner" ? "owner" : "staff" };
+      return s && s.username ? { username: s.username, role: s.role } : null;
+    } catch (e) { return null; }
+  }
+
+  /* ---------- sync ---------- */
+
+  async function sync() {
+    if (syncing) return db;
+    syncing = true;
+    try {
+      await flushQueue();
+      const payload = await API.bootstrap(todayStr());
+      db = hydrate(payload);
+      user = payload.user || user;
+      mergeQueue();
+      persist();
+      setOnline(true);
+      lastSyncError = null;
+      notify("sync");
+    } catch (e) {
+      if (e && e.offline) {
+        setOnline(false);
+        lastSyncError = e.message;
+      } else {
+        // the server answered, but said no: the session is dead or broken
+        lastSyncError = e.message;
+        if (e.status === 401) { user = null; saveSession(null); }
+        notify("error");
       }
-    } catch (e) {}
-    return null;
+    } finally {
+      syncing = false;
+    }
+    return db;
   }
 
   /* ---------- products ---------- */
+
   function products() {
     return get().products.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "bn"));
   }
   const priceFor = (p, s) => Number(p["price_" + String(s).toLowerCase()] || 0) || 0;
 
-  function sanitiseProduct(body, id) {
+  function localProduct(body, id) {
     const name = String(body.name || "").trim().slice(0, 120);
     if (!name) throw new Error("পণ্যের নাম লিখুন");
     return {
@@ -392,139 +412,161 @@
     };
   }
 
-  function addProduct(body) {
-    const p = sanitiseProduct(body);
-    get().products.push(p);
+  async function addProduct(body) {
+    const res = await API.saveProducts("POST", localProduct(body));
+    db.products.push(res.product);
     commit("products");
-    return p;
+    return res.product;
   }
-  function updateProduct(id, body) {
-    const i = get().products.findIndex((p) => p.id === id);
-    if (i < 0) throw new Error("পণ্য পাওয়া যায়নি");
-    get().products[i] = { ...get().products[i], ...sanitiseProduct(body, id) };
+  async function updateProduct(id, body) {
+    const res = await API.saveProducts("PUT", localProduct(body, id));
+    const i = db.products.findIndex((p) => p.id === id);
+    if (i >= 0) db.products[i] = res.product;
     commit("products");
-    return get().products[i];
+    return res.product;
   }
-  function deleteProduct(id) {
-    const d = get();
-    const i = d.products.findIndex((p) => p.id === id);
-    if (i < 0) throw new Error("পণ্য পাওয়া যায়নি");
-    d.products.splice(i, 1);
+  async function deleteProduct(id) {
+    await API.deleteProduct(id);
+    db.products = db.products.filter((p) => p.id !== id);
     commit("products");
   }
 
-  /* ---------- employees ---------- */
+  /* ---------- staff ---------- */
+
   const publicEmployee = (e) => ({
     id: e.id, username: e.username, role: e.role, active: e.active !== false, created_at: e.created_at,
   });
+  const employees = () => get().employees.map(publicEmployee);
 
-  function employees() {
-    return get().employees.map(publicEmployee);
-  }
-
-  function addEmployee(body) {
-    const username = String(body.username || "").trim().slice(0, 40);
-    const password = String(body.password || "");
-    if (!username) throw new Error("ইউজারনেম লিখুন");
-    if (password.length < 4) throw new Error("পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে");
-    if (get().employees.some((e) => e.username.toLowerCase() === username.toLowerCase()))
-      throw new Error("এই ইউজারনেম আগে থেকেই আছে");
-    const e = {
-      id: uid(), username, password_hash: hashPassword(password),
-      role: body.role === "owner" ? "owner" : "staff", active: true,
-      created_at: new Date().toISOString(),
-    };
-    get().employees.push(e);
+  async function addEmployee(body) {
+    const res = await API.saveStaff("POST", {
+      username: String(body.username || "").trim().slice(0, 40),
+      password: String(body.password || ""),
+      role: body.role === "owner" ? "owner" : "staff",
+    });
+    db.employees.push(res.employee);
     commit("employees");
-    return publicEmployee(e);
+    return res.employee;
   }
-
-  function updateEmployee(id, body) {
-    const d = get();
-    const i = d.employees.findIndex((e) => e.id === id);
-    if (i < 0) throw new Error("স্টাফ পাওয়া যায়নি");
-    const e = d.employees[i];
-    if (body.role === "owner" || body.role === "staff") e.role = body.role;
-    if (typeof body.active === "boolean") e.active = body.active;
-    if (body.password) {
-      if (String(body.password).length < 4) throw new Error("পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে");
-      e.password_hash = hashPassword(String(body.password));
-    }
-    if (e.role === "owner" && e.active === false) {
-      const owners = d.employees.filter((x) => x.role === "owner" && x.active !== false);
-      if (owners.length <= 1) throw new Error("শেষ মালিককে নিষ্ক্রিয় করা যাবে না");
-    }
+  async function updateEmployee(id, body) {
+    const payload = { id };
+    if (body.username !== undefined) payload.username = String(body.username).trim().slice(0, 40);
+    if (body.password) payload.password = String(body.password);
+    if (body.active !== undefined) payload.active = Boolean(body.active);
+    const res = await API.saveStaff("PUT", payload);
+    const i = db.employees.findIndex((e) => e.id === id);
+    if (i >= 0) db.employees[i] = { ...db.employees[i], ...res.employee };
     commit("employees");
-    return publicEmployee(e);
+    return res.employee;
   }
-
-  function deleteEmployee(id, currentUsername) {
-    const d = get();
-    const i = d.employees.findIndex((e) => e.id === id);
-    if (i < 0) throw new Error("স্টাফ পাওয়া যায়নি");
-    const e = d.employees[i];
-    if (e.username === currentUsername) throw new Error("নিজের অ্যাকাউন্ট মুছে ফেলা যাবে না");
-    if (e.role === "owner") {
-      const owners = d.employees.filter((x) => x.role === "owner" && x.active !== false);
-      if (owners.length <= 1) throw new Error("শেষ মালিককে মুছে ফেলা যাবে না");
+  async function deleteEmployee(id, currentUsername) {
+    const target = db.employees.find((e) => e.id === id);
+    if (target && target.username === currentUsername) {
+      throw new Error("নিজের অ্যাকাউন্ট মুছে ফেলা যাবে না");
     }
-    d.employees.splice(i, 1);
+    await API.deleteStaff(id);
+    db.employees = db.employees.filter((e) => e.id !== id);
     commit("employees");
   }
 
   /* ---------- invoices ---------- */
-  function nextInvoiceNo() {
-    const now = new Date();
-    const prefix = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}-`;
-    let max = 0;
-    for (const r of get().invoices) {
-      if (String(r.invoice_no).startsWith(prefix)) {
-        const n = parseInt(String(r.invoice_no).slice(prefix.length), 10);
-        if (!isNaN(n) && n > max) max = n;
-      }
-    }
-    return prefix + String(max + 1).padStart(3, "0");
-  }
 
-  function createInvoice(body, sellerUsername) {
-    const lines = (Array.isArray(body.lines) ? body.lines : [])
+  function sanitiseLines(lines) {
+    const out = (Array.isArray(lines) ? lines : [])
       .map((l) => ({
         item: String(l.item || "").trim().slice(0, 120),
         size: String(l.size || "").trim().slice(0, 10),
         qty: Math.max(1, Math.round(num(l.qty) || 1)),
-        price: Math.max(0, num(l.price)),
+        price: nonNeg(l.price),
       }))
       .filter((l) => l.item);
-    if (!lines.length) throw new Error("কার্ট খালি");
+    if (!out.length) throw new Error("কার্ট খালি");
+    return out;
+  }
 
+  /**
+   * Record a sale. Goes to the server when possible; if the connection is
+   * down the bill is queued locally and given a provisional number so the
+   * customer can still be served and a receipt printed.
+   */
+  /**
+   * A number for a bill that has not reached the server yet. It only has to be
+   * unique on this device and must never be reused, because the receipt is
+   * already in the customer's hand. A counter is used rather than the queue
+   * length, so two sales in the same instant cannot land on the same number.
+   */
+  function nextTempNo() {
+    let n = 0;
+    try { n = Number(localStorage.getItem(TEMP_KEY)) || 0; } catch (e) {}
+    n += 1;
+    try { localStorage.setItem(TEMP_KEY, String(n)); } catch (e) {}
+    return `TEMP-${String(n).padStart(3, "0")}`;
+  }
+
+  async function createInvoice(body) {
+    const lines = sanitiseLines(body && body.lines);
+    const client_id = uid();
+    const customer = String((body && body.customer) || "Walk-in Customer").trim().slice(0, 120) || "Walk-in Customer";
+    const paid = nonNeg(body && body.paid);
     const total = Math.round(lines.reduce((s, l) => s + l.qty * l.price, 0) * 100) / 100;
-    const paid = Math.max(0, num(body.paid));
     const change = Math.round((paid - total) * 100) / 100;
 
-    const now = new Date();
-    const invoice_no = nextInvoiceNo();
-    const invoice = {
-      invoice_no,
-      date_disp: todayStr(now),
-      time_disp: nowTime(now),
-      customer: String(body.customer || "Walk-in Customer").trim().slice(0, 120) || "Walk-in Customer",
-      seller: sellerUsername, // always the logged-in user
-      total, paid, change,
-      created_at: now.toISOString(),
-    };
-    const items = lines.map((l, i) => ({ id: uid(), invoice_no, seq: i, ...l }));
+    try {
+      const saved = await API.createInvoice({ customer, paid, client_id, lines });
+      setOnline(true);
+      const invoice = {
+        invoice_no: saved.invoice_no,
+        date_disp: saved.date_disp,
+        time_disp: saved.time_disp,
+        customer: saved.customer,
+        seller: saved.seller,
+        total: nonNeg(saved.total),
+        paid: nonNeg(saved.paid),
+        change: num(saved.change),
+        created_at: saved.created_at,
+        pending: false,
+      };
+      const items = (saved.items || []).map((it, i) => ({
+        id: it.id || uid(), invoice_no: saved.invoice_no, seq: i,
+        item: it.item, size: it.size, qty: it.qty, price: nonNeg(it.price),
+      }));
+      db.invoices.push(invoice);
+      db.invoice_items.push(...items);
+      // bills are what people miss most, so always snapshot
+      commit("invoices", true);
+      return { invoice, items };
+    } catch (e) {
+      if (!(e && e.offline)) throw e;
 
-    const d = get();
-    const invAt = d.invoices.length;
-    const itemAt = d.invoice_items.length;
-    d.invoices.push(invoice);
-    d.invoice_items.push(...items);
-    // bills are the thing people would actually miss, so never throttle these
-    commit("invoices", true, () => {
-      d.invoices.length = invAt;
-      d.invoice_items.length = itemAt;
-    });
-    return { invoice, items };
+      /* ---- no connection: keep the sale, flag it as not yet uploaded ---- */
+      setOnline(false);
+      const now = new Date();
+      const provisional = nextTempNo();
+      const invoice = {
+        invoice_no: provisional,
+        date_disp: todayStr(now),
+        time_disp: nowTime(now),
+        customer,
+        seller: (user && user.username) || "unknown",
+        total, paid, change,
+        created_at: now.toISOString(),
+        pending: true,
+      };
+      const items = lines.map((l, i) => ({
+        id: uid(), invoice_no: provisional, seq: i, ...l,
+      }));
+      // the queue entry must carry its own lines: it may be the only copy left
+      invoice.items = items;
+      const queue = readQueue();
+      queue.push({ client_id, invoice, at: now.toISOString() });
+      if (!writeQueue(queue)) {
+        throw new Error("ইন্টারনেট ও স্টোরেজ দুটোই নেই — বিলটি সেভ করা যায়নি");
+      }
+      db.invoices.push(invoice);
+      db.invoice_items.push(...items);
+      commit("invoices", true);
+      return { invoice, items, queued: true };
+    }
   }
 
   /** staff -> own bills only; owner -> everything (optional seller filter) */
@@ -534,8 +576,6 @@
     if (date) rows = rows.filter((r) => r.date_disp === date);
     if (effSeller) rows = rows.filter((r) => r.seller === effSeller);
     return rows.slice()
-      // newest first; invoice_no breaks ties because several bills can share a
-      // created_at millisecond on a busy counter
       .sort((a, b) =>
         String(b.created_at).localeCompare(String(a.created_at)) ||
         String(b.invoice_no).localeCompare(String(a.invoice_no))
@@ -547,22 +587,25 @@
     const inv = get().invoices.find((r) => r.invoice_no === invoiceNo);
     if (!inv) throw new Error("বিল পাওয়া যায়নি");
     if (role !== "owner" && inv.seller !== username) throw new Error("এই বিলটি আপনার নয়");
-    const items = get().invoice_items.filter((i) => i.invoice_no === invoiceNo).sort((a, b) => a.seq - b.seq);
+    const items = get().invoice_items
+      .filter((i) => i.invoice_no === invoiceNo)
+      .sort((a, b) => a.seq - b.seq);
     return { invoice: inv, items };
   }
 
-  function deleteInvoice(invoiceNo) {
-    const d = get();
-    const i = d.invoices.findIndex((r) => r.invoice_no === invoiceNo);
+  async function deleteInvoice(invoiceNo) {
+    const local = get().invoices.find((r) => r.invoice_no === invoiceNo);
+    if (local && local.pending) {
+      // never uploaded, so nothing to ask the server
+      dropFromQueue(invoiceNo);
+    } else {
+      await API.deleteInvoice(invoiceNo);
+    }
+    const i = db.invoices.findIndex((r) => r.invoice_no === invoiceNo);
     if (i < 0) throw new Error("বিল পাওয়া যায়নি");
-    const removed = d.invoices.splice(i, 1)[0];
-    const removedItems = [];
-    for (let k = d.invoice_items.length - 1; k >= 0; k--)
-      if (d.invoice_items[k].invoice_no === invoiceNo) removedItems.push(...d.invoice_items.splice(k, 1));
-    commit("invoices", true, () => {
-      d.invoices.splice(i, 0, removed);
-      d.invoice_items.push(...removedItems);
-    });
+    db.invoices.splice(i, 1);
+    db.invoice_items = db.invoice_items.filter((x) => x.invoice_no !== invoiceNo);
+    commit("invoices", true);
   }
 
   function statsToday({ username, role } = {}) {
@@ -576,39 +619,56 @@
   }
 
   /* ---------- settings ---------- */
+
   const settings = () => ({ ...DEFAULT_SETTINGS, ...get().settings });
 
-  function saveSettings(body) {
-    get().settings = { ...DEFAULT_SETTINGS, ...pickStrings(body) };
+  async function saveSettings(body) {
+    const res = await API.saveSettings(body);
+    db.settings = { ...DEFAULT_SETTINGS, ...res.settings };
     commit("settings");
     return settings();
   }
 
-  /* ---------- backup / restore / reset ---------- */
+  /* ---------- backup / restore ---------- */
+
   function exportJSON() {
     markExported();
     return JSON.stringify(get(), null, 2);
   }
 
-  function importJSON(text) {
+  /**
+   * Restore a backup file onto the server. The server validates the file
+   * first (dry run) so a wrong file is rejected before anything is deleted.
+   * Staff accounts are never touched — they live on the server.
+   */
+  async function importJSON(text) {
     const parsed = JSON.parse(text);
-    const next = normalise(parsed, true);
+    if (!parsed || typeof parsed !== "object") throw new Error("ফাইলটি বৈধ নয়");
+    if (!("invoices" in parsed) && !("products" in parsed)) {
+      throw new Error("ফাইলে বিল বা পণ্যের তালিকা নেই — সম্ভবত সঠিক ব্যাকআপ নয়");
+    }
+
+    const summary = await API.restoreDryRun(parsed);
     if (!confirm(
-      `ফাইলে ${next.employees.length} জন স্টাফ, ${next.products.length}টি পণ্য, ${next.invoices.length}টি বিল আছে।\n` +
-      "বর্তমান সব ডেটা মুছে যাবে। চালিয়ে যাবেন?"
+      `ফাইলে ${summary.products}টি পণ্য, ${summary.invoices}টি বিল আছে।\n` +
+      "সার্ভারের সব বিল ও পণ্য এই ফাইল দিয়ে বদলে যাবে। স্টাফ ও পাসওয়ার্ড অপরিবর্তিত থাকবে। চালিয়ে যাবেন?"
     )) return false;
-    takeSnapshot("before-import");
-    db = next;
-    commit("restore");
+
+    takeSnapshot("before-import", true);
+    await API.restore(parsed);
+    await sync();
     return true;
   }
 
-  function resetAll() {
-    if (!confirm("সব ডেটা মুছে যাবে — পণ্য, স্টাফ, বিল সবকিছু। নিশ্চিত?")) return false;
+  /** wipe the server's bills and products; accounts are left alone */
+  async function resetAll() {
+    if (!confirm("সব বিল ও পণ্য মুছে যাবে। স্টাফ অ্যাকাউন্ট থাকবে। নিশ্চিত?")) return false;
     takeSnapshot("before-reset", true);
-    db = freshDB();
-    saveSession(null);
-    commit("reset");
+    await API.restore({ settings: DEFAULT_SETTINGS, products: [], invoices: [], invoice_items: [] });
+    writeQueue([]);
+    db = emptyDB();
+    db.settings = { ...DEFAULT_SETTINGS };
+    commit("reset", true);
     return true;
   }
 
@@ -616,83 +676,95 @@
     try { return new Blob([localStorage.getItem(KEY) || ""]).size; } catch (e) { return 0; }
   }
 
-  /* ---------- safety snapshots ---------- */
+  /* ---------- migration from the local-only version ---------- */
+
+  /** bills saved in the browser before this app had a server */
+  function legacyData() {
+    try {
+      const raw = localStorage.getItem(LEGACY_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.invoices)) return null;
+      return parsed;
+    } catch (e) { return null; }
+  }
+
+  const needsMigration = () =>
+    !localStorage.getItem(MIGRATED_KEY) && Boolean(legacyData() && legacyData().invoices.length);
+
+  function markMigrated() {
+    try { localStorage.setItem(MIGRATED_KEY, String(Date.now())); } catch (e) {}
+  }
+
+  /* ---------- safety snapshots (of the local cache + queue) ---------- */
+
   function readSnapshots() {
     try {
-      const raw = localStorage.getItem(SNAP_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
+      const arr = JSON.parse(localStorage.getItem(SNAP_KEY) || "[]");
       return Array.isArray(arr) ? arr : [];
     } catch (e) { return []; }
   }
-
   function writeSnapshots(list) {
     try { localStorage.setItem(SNAP_KEY, JSON.stringify(list)); return true; }
     catch (e) { return false; }
   }
 
-  /**
-   * Saves the current database as a separate snapshot.
-   * Never throws — if there is not enough room we quietly skip it, because
-   * failing to snapshot must never block a real sale.
-   */
   function takeSnapshot(reason, force) {
     try {
       const now = Date.now();
       const list = readSnapshots();
       if (!force && list.length && now - list[0].ts < SNAPSHOT_MIN_INTERVAL) return false;
-
-      // do not snapshot an empty/fresh database
-      const data = JSON.stringify(db);
-      if (!db || !db.invoices || !db.employees) return false;
-
+      if (!db) return false;
+      // the unsent queue is the only truly irreplaceable local data
+      const data = JSON.stringify({ db, queue: readQueue() });
       const entry = { ts: now, reason: reason || "auto", invoices: db.invoices.length, data };
       const next = [entry, ...list].slice(0, MAX_SNAPSHOTS);
-
-      // respect the storage budget: drop the oldest until it fits
       let total = 0;
       for (let i = next.length - 1; i >= 0; i--) {
         total += next[i].data.length;
         if (total > MAX_TOTAL_BACKUP_BYTES && i < next.length - 1) next.splice(i, 1);
       }
-
-      if (writeSnapshots(next)) { forceSnapshotCheck(); return true; }
-      return false;
-    } catch (e) {
-      return false;
-    }
+      return writeSnapshots(next);
+    } catch (e) { return false; }
   }
 
-  function snapshots() {
-    return readSnapshots()
+  const snapshots = () =>
+    readSnapshots()
       .map((s) => ({ ts: s.ts, reason: s.reason, invoices: s.invoices, size: s.data.length }))
       .sort((a, b) => b.ts - a.ts);
-  }
-
-  function restoreSnapshot(ts) {
-    const list = readSnapshots();
-    const hit = list.find((s) => s.ts === ts);
-    if (!hit) throw new Error("স্ন্যাপশট পাওয়া যায়নি");
-    const next = normalise(JSON.parse(hit.data), true);
-    takeSnapshot("before-restore", true);
-    db = next;
-    commit("restore");
-    return next;
-  }
 
   function clearSnapshots() {
     try { localStorage.removeItem(SNAP_KEY); } catch (e) {}
   }
 
-  /** true when the database vanished but snapshots still exist */
-  function hasRecoverableData() {
-    let main = null;
-    try { main = localStorage.getItem(KEY); } catch (e) {}
-    if (main) return false;
-    return readSnapshots().some((s) => s.data);
+  /** a snapshot of the cache can be put back if the browser data is lost */
+  function restoreSnapshot(ts) {
+    const hit = readSnapshots().find((s) => s.ts === ts);
+    if (!hit) throw new Error("স্ন্যাপশট পাওয়া যায়নি");
+    const parsed = JSON.parse(hit.data);
+    if (parsed.db) {
+      db = hydrate({
+        settings: parsed.db.settings,
+        products: parsed.db.products,
+        staff: parsed.db.employees,
+        invoices: rebuildInvoices(parsed.db),
+      });
+    }
+    if (Array.isArray(parsed.queue) && parsed.queue.length) writeQueue(parsed.queue);
+    commit("restore", true);
+    return db;
   }
 
-  /** what load() had to repair on the last load, or null if all was well */
-  const lastRecovery = () => (recovery ? { ...recovery } : null);
+  function rebuildInvoices(flat) {
+    const byNo = new Map();
+    for (const it of flat.invoice_items || []) {
+      if (!byNo.has(it.invoice_no)) byNo.set(it.invoice_no, []);
+      byNo.get(it.invoice_no).push({
+        seq: it.seq, item: it.item, size: it.size, qty: it.qty, price: it.price,
+      });
+    }
+    return (flat.invoices || []).map((r) => ({ ...r, items: byNo.get(r.invoice_no) || [] }));
+  }
 
   function markExported() {
     try { localStorage.setItem(MARK_KEY, String(Date.now())); } catch (e) {}
@@ -700,37 +772,46 @@
   function lastExport() {
     try { return Number(localStorage.getItem(MARK_KEY) || 0) || 0; } catch (e) { return 0; }
   }
-  /** days since the user last downloaded a backup file (0 = never/just now) */
+  /** days since a backup file was downloaded (-1 = never) */
   function daysSinceExport() {
     const t = lastExport();
     if (!t) return -1;
     return Math.floor((Date.now() - t) / 86400000);
   }
 
-  let warnedFull = false;
-  function forceSnapshotCheck() {
-    if (warnedFull) return;
+  function commit(reason, force) {
+    persist();
+    try { takeSnapshot(reason, force); } catch (e) {}
+    notify(reason || "change");
     try {
-      const used = usageBytes();
-      if (used > 4 * 1024 * 1024) {
-        warnedFull = true;
-        if (typeof console !== "undefined")
-          console.warn("[store] storage nearly full:", used, "bytes — advise a backup");
+      if (global.BroadcastChannel) {
+        if (!global.__lfjBC) global.__lfjBC = new BroadcastChannel("lfj-store");
+        global.__lfjBC.postMessage({ reason });
       }
     } catch (e) {}
   }
 
+  /* retry the queue whenever the connection comes back */
+  if (global.addEventListener) {
+    global.addEventListener("online", () => {
+      setOnline(true);
+      sync();
+    });
+    global.addEventListener("offline", () => setOnline(false));
+  }
+
   global.Store = {
-    KEY, SNAP_KEY, SESSION_KEY, uid, todayStr, nowTime, num,
-    sha256, hashPassword,
+    KEY, QUEUE_KEY, SESSION_KEY, uid, todayStr, nowTime, num,
     load, get, onChange, usageBytes,
-    login, saveSession, readSession,
+    me, login, logout, saveSession, readSession, sync,
+    isOnline, pendingCount, statusError, flushQueue,
     products, priceFor, addProduct, updateProduct, deleteProduct,
     employees, addEmployee, updateEmployee, deleteEmployee,
-    createInvoice, invoices, invoiceWithItems, deleteInvoice, statsToday, nextInvoiceNo,
+    createInvoice, invoices, invoiceWithItems, deleteInvoice, statsToday,
     settings, saveSettings,
     exportJSON, importJSON, resetAll,
-    takeSnapshot, snapshots, restoreSnapshot, clearSnapshots, hasRecoverableData, lastRecovery,
+    legacyData, needsMigration, markMigrated,
+    takeSnapshot, snapshots, restoreSnapshot, clearSnapshots,
     markExported, lastExport, daysSinceExport, MAX_SNAPSHOTS,
     DEFAULT_SETTINGS,
   };

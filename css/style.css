@@ -997,7 +997,35 @@ body {
 .settings-message.error { background: var(--color-danger-bg); color: var(--color-danger); }
 
 /* ========================================
-   BANNERS (recovery / backup reminder)
+   SYNC BADGE (header)
+   ======================================== */
+.sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.sync-badge[hidden] { display: none !important; }
+
+.sync-badge.online { background: #e8f6ee; color: #1b7a44; border-color: #bfe6cf; }
+.sync-badge.syncing { background: #fff6e0; color: #8a6d1f; border-color: #f2e0b0; }
+.sync-badge.offline { background: #fdecec; color: #b3261e; border-color: #f5c6c4; }
+
+.sync-badge svg { flex-shrink: 0; }
+
+@media (max-width: 720px) {
+  .sync-badge { font-size: 0.7rem; padding: 3px 8px; }
+  .sync-badge svg { display: none; }
+}
+
+/* ========================================
+   BANNERS (pending bills / backup reminder)
    ======================================== */
 .banner {
   display: flex;

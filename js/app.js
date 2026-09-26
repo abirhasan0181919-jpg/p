@@ -113,7 +113,7 @@
   }
 
   /* ---------------- LOGIN ---------------- */
-  function handleLogin(e) {
+  async function handleLogin(e) {
     e.preventDefault();
     const err = $("#login-error");
     const username = $("#username").value.trim();
@@ -122,18 +122,27 @@
     err.classList.add("hidden");
     if (!username || !password) return;
 
-    const user = S.login(username, password);
-    if (!user) {
-      err.textContent = "ইউজারনেম বা পাসওয়ার্ড ভুল";
-      err.classList.remove("hidden");
-      $("#password").value = "";
-      $("#password").focus();
-      return;
-    }
+    const btn = $("#login-btn");
+    const label = btn ? btn.innerHTML : "";
+    if (btn) { btn.disabled = true; btn.innerHTML = `${svg("info", 18)} অপেক্ষা করুন...`; }
 
-    S.saveSession(user);
-    state.user = user;
-    enterApp();
+    try {
+      const user = await S.login(username, password);
+      state.user = user;
+      $("#password").value = "";
+      enterApp();
+      maybeOfferMigration();
+    } catch (ex) {
+      // a connection problem is not a wrong password — say which it is
+      const offline = ex && (ex.offline || ex.name === "OfflineError");
+      err.textContent = offline
+        ? "সার্ভারের সাথে সংযোগ হচ্ছে না — ইন্টারনেট দেখে নিন"
+        : ex.message || "ইউজারনেম বা পাসওয়ার্ড ভুল";
+      err.classList.remove("hidden");
+      $("#password").focus();
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = label; }
+    }
   }
 
   function logout(force) {
@@ -146,14 +155,20 @@
     doLogout();
   }
 
-  function doLogout() {
-    S.saveSession(null);
+  async function doLogout() {
+    // a queued bill is not lost by logging out, but the person must know
+    const waiting = S.pendingCount();
+    await S.logout();
     state.user = null;
     state.cart = [];
     renderCart();
     showPage("login-page");
     $("#login-form").reset();
     $("#login-error").classList.add("hidden");
+    updateConnection();
+    if (waiting) {
+      toast(`${waiting}টি বিল সার্ভারে পাঠানো বাকি আছে — ইন্টারনেট ফিরলে পাঠানো হবে`, "warning");
+    }
   }
 
   /* ---------------- NAVIGATION ---------------- */
@@ -215,6 +230,65 @@
     refreshData();
     setView("billing");
     checkBackupReminder();
+    updateConnection();
+  }
+
+  /* ---------------- CONNECTION / SYNC ---------------- */
+
+  /** the till keeps working offline, so the header must say so plainly */
+  function updateConnection() {
+    const el = $("#sync-status");
+    if (!el) return;
+    const pending = S.pendingCount();
+    const online = S.isOnline();
+
+    if (!el.dataset.ready) {
+      el.hidden = false;
+      el.dataset.ready = "1";
+    }
+
+    if (!online) {
+      el.className = "sync-badge offline";
+      el.innerHTML = pending
+        ? `${svg("info", 14)} অফলাইন · ${pending}টি বিল বাকি`
+        : `${svg("info", 14)} অফলাইন`;
+      el.title = pending
+        ? `${pending}টি বিল এই ডিভাইসে সংরক্ষিত আছে। ইন্টারনেট ফিরলে সেগুলো সার্ভারে চলে যাবে।`
+        : "ইন্টারনেট নেই। বিল দিতে পারবেন, পরে সার্ভারে যাবে।";
+      return;
+    }
+    if (pending) {
+      el.className = "sync-badge syncing";
+      el.innerHTML = `${svg("info", 14)} ${pending}টি পাঠানো হচ্ছে`;
+      el.title = "সার্ভারে পাঠানো বাকি বিল পাঠানো হচ্ছে";
+      return;
+    }
+    el.className = "sync-badge online";
+    el.innerHTML = `${svg("check", 14)} সেভ হয়েছে`;
+    el.title = "সব বিল সার্ভারে সেভ আছে";
+  }
+
+  /** owner only: offer to push the old browser-only data up to the server */
+  async function maybeOfferMigration() {
+    if (!state.user || state.user.role !== "owner") return;
+    if (!S.needsMigration()) return;
+    const legacy = S.legacyData();
+    const ok = await confirmDialog(
+      `এই ব্রাউজারে আগে ${legacy.invoices.length}টি বিল সংরক্ষিত আছে (সার্ভার ব্যবহারের আগে)।\n` +
+      "সেগুলো সার্ভারে নিয়ে যাব? এতে সব ডিভাইসে একই বিল দেখা যাবে।",
+      "আগের বিল নিয়ে যাওয়া"
+    );
+    if (!ok) { S.markMigrated(); return; }
+    try {
+      const res = await API.restoreDryRun(legacy);
+      await API.restore(legacy);
+      S.markMigrated();
+      await S.sync();
+      refreshData();
+      toast(`${res.invoices}টি আগের বিল সার্ভারে নিয়ে যাওয়া হয়েছে`, "success");
+    } catch (e) {
+      toast(e.message || "আগের বিল নিয়ে যাওয়া যায়নি", "error");
+    }
   }
 
   function refreshData() {
@@ -373,7 +447,7 @@
     btn.innerHTML = `${svg("info", 18)} সেভ হচ্ছে...`;
 
     try {
-      const res = S.createInvoice(
+      const res = await S.createInvoice(
         {
           customer,
           paid,
@@ -517,7 +591,7 @@
     const ok = await confirmDialog(`বিল ${no} মুছে ফেলবেন?`, "বিল ডিলিট");
     if (!ok) return;
     try {
-      S.deleteInvoice(no);
+      await S.deleteInvoice(no);
       toast("বিল মুছে ফেলা হয়েছে", "success");
     } catch (e) { toast(e.message, "error"); }
   }
@@ -562,7 +636,7 @@
     $("#p-name").focus();
   }
 
-  function saveProduct(e) {
+  async function saveProduct(e) {
     e.preventDefault();
     const body = {
       name: $("#p-name").value.trim(),
@@ -571,8 +645,8 @@
       price_l: $("#p-l").value || 0,
     };
     try {
-      if (state.editingProductId) S.updateProduct(state.editingProductId, body);
-      else S.addProduct(body);
+      if (state.editingProductId) await S.updateProduct(state.editingProductId, body);
+      else await S.addProduct(body);
       closeModal($("#product-modal"));
       refreshData();
       renderProductsManage();
@@ -585,7 +659,7 @@
     const ok = await confirmDialog(`"${p ? p.name : "পণ্য"}" মুছে ফেলবেন? পুরনো বিলে থাকবে।`, "পণ্য মুছে ফেলুন");
     if (!ok) return;
     try {
-      S.deleteProduct(id);
+      await S.deleteProduct(id);
       refreshData();
       renderProductsManage();
       toast("পণ্য মুছে ফেলা হয়েছে", "success");
@@ -632,20 +706,20 @@
     (s ? $("#s-password") : $("#s-username")).focus();
   }
 
-  function saveStaff(e) {
+  async function saveStaff(e) {
     e.preventDefault();
     const body = { role: $("#s-role").value };
     const pw = $("#s-password").value.trim();
     if (pw) body.password = pw;
     try {
       if (state.editingStaffId) {
-        S.updateEmployee(state.editingStaffId, body);
+        await S.updateEmployee(state.editingStaffId, body);
       } else {
         body.username = $("#s-username").value.trim();
         body.password = pw;
         if (!body.username) return toast("ইউজারনেম লিখুন", "warning");
         if (!body.password) return toast("পাসওয়ার্ড লিখুন", "warning");
-        S.addEmployee(body);
+        await S.addEmployee(body);
       }
       closeModal($("#staff-modal"));
       renderStaffManage();
@@ -659,7 +733,7 @@
     const ok = await confirmDialog(`"${s ? s.username : ""}" কে মুছে ফেলবেন?`, "স্টাফ মুছে ফেলুন");
     if (!ok) return;
     try {
-      S.deleteEmployee(id, state.user.username);
+      await S.deleteEmployee(id, state.user.username);
       renderStaffManage();
       renderStaffFilter();
       toast("মুছে ফেলা হয়েছে", "success");
@@ -681,50 +755,68 @@
     } catch (e) {}
   }
 
-  function showRecoveryBanner() {
-    // load() repairs the data silently, so the honest signal is that it did
-    const fixed = S.lastRecovery();
-    if (!fixed) {
-      // nothing to repair — but if snapshots exist while the main key is gone,
-      // load() failed to use them, so offer the manual path
-      if (!S.hasRecoverableData()) return;
-    }
+  /**
+   * The old banner warned about losing the browser database. That data lives on
+   * the server now, so what is worth warning about is a bill that is still
+   * only on this device.
+   */
+  function showPendingBanner() {
+    const pending = S.pendingCount();
+    if (!pending) return;
+    if (Date.now() < bannerDismissed("pending")) return;
+
     const snaps = S.snapshots();
-    if (!snaps.length) return;
-    if (Date.now() < bannerDismissed("recovery")) return;
     const newest = snaps[0];
-    if (fixed) {
-      $("#recovery-title").textContent = "আগের ডেটা ফিরিয়ে আনা হয়েছে";
-      $("#recovery-detail").textContent =
-        `ব্রাউজারের স্টোরেজ সমস্যার কারণে ডেটা নতুন করে লেখা হয়েছিল। সুরক্ষা কপি থেকে ${fixed.invoices}টি বিল ফিরে পাওয়া গেছে (${timeAgo(newest.ts)})। এখনই ব্যাকআপ ফাইল নিন।`;
-      // the data is already back, so restoring again would only throw away
-      // anything new — offer the backup instead
-      $("#recover-btn").textContent = "ব্যাকআপ নিন";
-      $("#recover-btn").dataset.mode = "backup";
-    } else {
-      $("#recovery-title").textContent = "আগের ডেটা পাওয়া যায়নি!";
-      $("#recovery-detail").textContent =
-        `ব্রাউজারের ডেটা মুছে গেছে বা ক্ষতিগ্রস্ত হয়েছে। সবচেয়ে নতুন সুরক্ষা কপিতে ${newest.invoices}টি বিল আছে (${timeAgo(newest.ts)})।`;
-      $("#recover-btn").textContent = "স্ন্যাপশট থেকে ফেরান";
-      $("#recover-btn").dataset.mode = "restore";
-    }
+    $("#recovery-title").textContent = `${pending}টি বিল এখনো সার্ভারে পৌঁছায়নি`;
+    $("#recovery-detail").textContent = S.isOnline()
+      ? "ইন্টারনেট আছে। এখনই পাঠিয়ে দিলে বিল নম্বর ঠিক হয়ে যাবে।"
+      : `ইন্টারনেট ফিরলেই এগুলো নিজে থেকেই চলে যাবে${newest ? ` (সুরক্ষা কপি ${timeAgo(newest.ts)})` : ""}।`;
+    $("#recover-btn").textContent = "এখনই পাঠান";
     $("#recovery-banner").classList.remove("hidden");
   }
 
+  /** push the waiting bills to the server now */
+  async function doFlush() {
+    const btn = $("#recover-btn");
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "পাঠানো হচ্ছে...";
+    try {
+      const res = await S.flushQueue();
+      updateConnection();
+      showPendingBanner();
+      if (res.sent) {
+        await S.sync();
+        refreshData();
+        toast(`${res.sent}টি বিল সার্ভারে পাঠানো হয়েছে`, "success");
+      }
+      if (S.pendingCount()) {
+        toast(`আরও ${S.pendingCount()}টি বিল বাকি আছে`, "warning");
+      }
+    } catch (e) {
+      toast(e.message || "পাঠানো যায়নি", "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  /** put back a local safety copy (cache + any unsent bills) */
   async function doRecover() {
     const snaps = S.snapshots();
     if (!snaps.length) return toast("কোনো সুরক্ষা কপি নেই", "warning");
     const ok = await confirmDialog(
       `সবচেয়ে নতুন সুরক্ষা কপি (${timeAgo(snaps[0].ts)}, ${snaps[0].invoices}টি বিল) থেকে ডেটা ফেরানো হবে।\n` +
-      "বর্তমান ডেটা সেই কপি দিয়ে বদলে যাবে। চালিয়ে যাবেন?",
+      "এই ডিভাইসের বর্তমান তালিকা সেই কপি দিয়ে বদলে যাবে। চালিয়ে যাবেন?",
       "ডেটা ফেরান"
     );
     if (!ok) return;
     try {
       S.restoreSnapshot(snaps[0].ts);
       $("#recovery-banner").classList.add("hidden");
-      toast("ডেটা ফেরিয়ে আনা হয়েছে", "success");
-      setTimeout(() => location.reload(), 800);
+      toast("ডেটা ফিরিয়ে আনা হয়েছে", "success");
+      refreshData();
+      updateConnection();
     } catch (e) {
       toast(e.message || "ফেরানো যায়নি", "error");
     }
@@ -825,10 +917,10 @@
     renderSnapshots();
   }
 
-  function saveSettings(e) {
+  async function saveSettings(e) {
     e.preventDefault();
     try {
-      state.settings = S.saveSettings({
+      state.settings = await S.saveSettings({
         shop_name: $("#shop-name").value.trim(),
         shop_address: $("#shop-address").value.trim(),
         shop_phone: $("#shop-phone").value.trim(),
@@ -864,7 +956,7 @@
   async function importBackup(file) {
     try {
       const text = await file.text();
-      if (S.importJSON(text)) {
+      if (await S.importJSON(text)) {
         toast("ডেটা ফিরিয়ে আনা হয়েছে", "success");
         setTimeout(() => location.reload(), 800);
       }
@@ -874,7 +966,7 @@
   }
 
   async function resetAll() {
-    if (S.resetAll()) {
+    if (await S.resetAll()) {
       toast("সব ডেটা মুছে ফেলা হয়েছে", "success");
       setTimeout(() => location.reload(), 700);
     }
@@ -965,18 +1057,10 @@
     $("#reset-btn").addEventListener("click", resetAll);
     $("#import-from-login").addEventListener("click", () => $("#import-input").click());
 
-    // safety banners + snapshots
-    $("#recover-btn").addEventListener("click", () => {
-      if ($("#recover-btn").dataset.mode === "backup") {
-        exportBackup();
-        dismissBanner("recovery", 7);
-        $("#recovery-banner").classList.add("hidden");
-      } else {
-        doRecover();
-      }
-    });
+    // pending-bill banner + safety snapshots
+    $("#recover-btn").addEventListener("click", doFlush);
     $("#recover-dismiss").addEventListener("click", () => {
-      dismissBanner("recovery", 1);
+      dismissBanner("pending", 1);
       $("#recovery-banner").classList.add("hidden");
     });
     $("#backup-now-btn").addEventListener("click", () => {
@@ -1023,22 +1107,46 @@
   }
 
   /* ---------------- BOOT ---------------- */
-  function init() {
+  async function init() {
     S.load();
     wire();
     paintIcons();
     $("#logo-cup").innerHTML = svg("cup", 56, 'style="color:var(--color-primary)"');
     renderProducts();
     renderCart();
-    showRecoveryBanner();
 
-    const session = S.readSession();
-    if (session) {
-      state.user = session;
+    // the cookie on the server decides who is signed in; the local copy is
+    // only a hint, so the answer can take a moment on a slow connection
+    const user = await S.me();
+
+    if (user) {
+      state.user = user;
       enterApp();
+      maybeOfferMigration();
     } else {
       showPage("login-page");
+      const err = $("#login-error");
+      const problem = S.statusError();
+      if (problem) {
+        err.textContent = problem;
+        err.classList.remove("hidden");
+      }
     }
+    updateConnection();
+    showPendingBanner();
+    startTimers();
+  }
+
+  /** periodic housekeeping: retry the queue and re-check the connection */
+  function startTimers() {
+    if (global.__lfjTimers) return;
+    global.__lfjTimers = setInterval(() => {
+      if (S.pendingCount() && S.isOnline()) S.flushQueue().then(refreshData).catch(() => {});
+    }, 30000);
+    global.addEventListener("online", () => S.flushQueue().then(() => {
+      updateConnection();
+      refreshData();
+    }).catch(() => {}));
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
