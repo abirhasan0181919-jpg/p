@@ -1,13 +1,12 @@
 /* ==========================================================
-   Live Fruit Juice — Frontend (talks to our own JSON-file API)
+   Live Fruit Juice — App (UI layer, talks to window.Store)
    ========================================================== */
 
 (function () {
   "use strict";
 
+  const S = window.Store;
   const CURRENCY = "৳";
-  const SALT = "livefruitjuice_salt_";
-  const TOKEN_KEY = "lfj_token";
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -36,30 +35,25 @@
     back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
-    refresh: '<path d="M23 4v6h-6M1 20v-6h6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>',
-    save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
   };
 
   function svg(name, size = 20, extra = "") {
-    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}" ${extra}>${I[name] || ""}</svg>`;
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}" ${extra} aria-hidden="true">${I[name] || ""}</svg>`;
   }
-  function paintIcons(root = document) {
-    $$("[data-icon]", root).forEach((el) => {
+  function paintIcons() {
+    $$("[data-icon]").forEach((el) => {
       if (!el.firstElementChild) el.innerHTML = svg(el.dataset.icon, Number(el.dataset.size) || 20);
     });
   }
 
   /* ---------------- STATE ---------------- */
   const state = {
-    token: null,
-    user: null, // { username, role }
+    user: null,          // { username, role }
     products: [],
-    staff: [],
     cart: [],
-    settings: { shop_name: "Live Fruit Juice", shop_address: "", shop_phone: "", auto_print: true, show_thankyou: true },
+    settings: S.DEFAULT_SETTINGS,
     view: "billing",
     ownerFilter: "all",
-    es: null,
     editingProductId: null,
     editingStaffId: null,
   };
@@ -68,9 +62,6 @@
   const money = (n) =>
     CURRENCY +
     (Math.round((Number(n) || 0) * 100) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-
-  const p2 = (x) => String(x).padStart(2, "0");
-  const todayStr = (d = new Date()) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 
   function prettyTime(t) {
     if (!t) return "";
@@ -84,61 +75,10 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-  async function sha256(text) {
-    if (window.crypto && window.crypto.subtle) {
-      const buf = new TextEncoder().encode(text);
-      const hash = await window.crypto.subtle.digest("SHA-256", buf);
-      return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
-    }
-    throw new Error("SHA256 অনুপলব্ধ");
-  }
-
-  /* ---------------- API CLIENT ---------------- */
-  function setToken(t) {
-    state.token = t;
-    try {
-      if (t) localStorage.setItem(TOKEN_KEY, t);
-      else localStorage.removeItem(TOKEN_KEY);
-    } catch (e) {}
-  }
-  function loadToken() {
-    try { state.token = localStorage.getItem(TOKEN_KEY); } catch (e) { state.token = null; }
-    return state.token;
-  }
-
-  class ApiError extends Error {
-    constructor(msg, status) { super(msg); this.status = status; }
-  }
-
-  async function api(path, opts = {}) {
-    const headers = { "Content-Type": "application/json" };
-    if (state.token) headers.Authorization = "Bearer " + state.token;
-
-    let res;
-    try {
-      res = await fetch("/api" + path, {
-        method: opts.method || "GET",
-        headers,
-        body: opts.body ? JSON.stringify(opts.body) : undefined,
-      });
-    } catch (e) {
-      throw new ApiError("সার্ভারে পৌঁছানো যায়নি — ইন্টারনেট দেখুন", 0);
-    }
-
-    let data = null;
-    const text = await res.text();
-    if (text) { try { data = JSON.parse(text); } catch (e) { data = null; } }
-
-    if (!res.ok) {
-      if (res.status === 401 && state.user) { forceLogout(); }
-      throw new ApiError((data && data.error) || "সমস্যা হয়েছে", res.status);
-    }
-    return data;
-  }
-
   /* ---------------- TOAST / MODAL ---------------- */
   function toast(msg, type = "info", ms = 3200) {
     const box = $("#toast-container");
+    if (!box) return;
     const ic = { success: "check", error: "alert", warning: "alert", info: "info" }[type] || "info";
     const el = document.createElement("div");
     el.className = `toast ${type}`;
@@ -146,13 +86,14 @@
     box.appendChild(el);
     setTimeout(() => {
       el.style.transition = "opacity .3s, transform .3s";
-      el.style.opacity = "0"; el.style.transform = "translateX(60px)";
+      el.style.opacity = "0";
+      el.style.transform = "translateX(60px)";
       setTimeout(() => el.remove(), 300);
     }, ms);
   }
 
-  function openModal(el) { el.classList.add("visible"); }
-  function closeModal(el) { el.classList.remove("visible"); }
+  const openModal = (el) => el.classList.add("visible");
+  const closeModal = (el) => el.classList.remove("visible");
 
   function confirmDialog(message, title = "নিশ্চিত করুন") {
     return new Promise((resolve) => {
@@ -172,52 +113,47 @@
   }
 
   /* ---------------- LOGIN ---------------- */
-  async function handleLogin(e) {
+  function handleLogin(e) {
     e.preventDefault();
     const err = $("#login-error");
-    const btn = $(".btn-login");
     const username = $("#username").value.trim();
     const password = $("#password").value;
 
     err.classList.add("hidden");
     if (!username || !password) return;
 
-    btn.classList.add("loading");
-    btn.disabled = true;
-
-    try {
-      const hash = await sha256(SALT + password);
-      const res = await api("/auth/login", { method: "POST", body: { username, password_hash: hash } });
-      setToken(res.token);
-      state.user = { username: res.username, role: res.role };
-      await enterApp();
-    } catch (e2) {
-      err.textContent = e2.message || "লগইনে সমস্যা হয়েছে";
+    const user = S.login(username, password);
+    if (!user) {
+      err.textContent = "ইউজারনেম বা পাসওয়ার্ড ভুল";
       err.classList.remove("hidden");
       $("#password").value = "";
       $("#password").focus();
-    } finally {
-      btn.classList.remove("loading");
-      btn.disabled = false;
+      return;
     }
+
+    S.saveSession(user);
+    state.user = user;
+    enterApp();
   }
 
-  function forceLogout() {
-    setToken(null);
+  function logout(force) {
+    if (!force && cartCount() > 0) {
+      confirmDialog("কার্টে পণ্য আছে। তবুও লগ আউট করবেন?", "লগ আউট").then((ok) => {
+        if (ok) doLogout();
+      });
+      return;
+    }
+    doLogout();
+  }
+
+  function doLogout() {
+    S.saveSession(null);
     state.user = null;
     state.cart = [];
-    stopLive();
-    showPage("login-page");
     renderCart();
-  }
-
-  async function logout() {
-    if (cartCount() > 0) {
-      const ok = await confirmDialog("কার্টে পণ্য আছে। তবুও লগ আউট করবেন?", "লগ আউট");
-      if (!ok) return;
-    }
-    forceLogout();
-    toast("লগ আউট হয়েছে", "info");
+    showPage("login-page");
+    $("#login-form").reset();
+    $("#login-error").classList.add("hidden");
   }
 
   /* ---------------- NAVIGATION ---------------- */
@@ -227,23 +163,31 @@
     if (el) el.classList.add("active");
   }
 
-  const OWNER_PAGES = { products: renderProductsManage, staff: renderStaffManage, settings: fillSettings };
+  const OWNER_ONLY = ["products", "staff", "settings"];
 
   function setView(name) {
-    if (state.user && state.user.role !== "owner" && OWNER_PAGES[name]) {
+    if (state.user && state.user.role !== "owner" && OWNER_ONLY.includes(name)) {
       toast("শুধুমাত্র মালিক এই পেজ দেখতে পারবেন", "warning");
       name = "billing";
     }
     state.view = name;
     $$(".view").forEach((v) => v.classList.remove("active"));
-    const map = { billing: "billing-view", "today-bills": "today-bills-view", products: "products-view", staff: "staff-view", settings: "settings-view" };
+    const map = {
+      billing: "billing-view",
+      "today-bills": "today-bills-view",
+      products: "products-view",
+      staff: "staff-view",
+      settings: "settings-view",
+    };
     const el = $("#" + (map[name] || "billing-view"));
     if (el) el.classList.add("active");
     $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.page === name));
     closeSidebar();
 
-    if (name === "today-bills") loadTodayBills();
-    if (OWNER_PAGES[name]) OWNER_PAGES[name]();
+    if (name === "today-bills") renderBills();
+    if (name === "products") renderProductsManage();
+    if (name === "staff") renderStaffManage();
+    if (name === "settings") fillSettings();
     window.scrollTo({ top: 0 });
   }
 
@@ -262,87 +206,42 @@
   }
 
   /* ---------------- ENTER APP ---------------- */
-  async function enterApp() {
+  function enterApp() {
     const isOwner = state.user.role === "owner";
     showPage("billing-page");
-    $("#current-user").innerHTML = `${svg("user", 15)} ${esc(state.user.username)} · ${isOwner ? "ওনার" : "স্টাফ"}`;
+    $("#current-user").innerHTML =
+      `${svg("user", 15)} ${esc(state.user.username)} · ${isOwner ? "ওনার" : "স্টাফ"}`;
     $$(".owner-only").forEach((el) => (el.style.display = isOwner ? "" : "none"));
-
-    await Promise.allSettled([loadProducts(), loadSettings(), loadStaff()]);
-    startLive();
+    refreshData();
     setView("billing");
   }
 
-  /* ---------------- DATA LOADERS ---------------- */
-  async function loadProducts() {
-    try {
-      state.products = (await api("/products")) || [];
-      renderProducts();
-    } catch (e) {
-      toast("পণ্য লোড করা যায়নি", "error");
-    }
+  function refreshData() {
+    state.products = S.products();
+    state.settings = S.settings();
+    renderProducts();
+    renderStaffFilter();
+    if (state.view === "billing") renderCart();
   }
 
-  async function loadSettings() {
-    try {
-      state.settings = (await api("/settings")) || state.settings;
-    } catch (e) { /* keep defaults */ }
-  }
-
-  async function loadStaff() {
-    try {
-      state.staff = (await api("/employees")) || [];
-    } catch (e) { state.staff = []; }
+  function renderStaffFilter() {
     const sel = $("#staff-filter");
-    if (sel) {
-      sel.innerHTML = '<option value="all">সবাই</option>' +
-        state.staff.map((s) => `<option value="${esc(s.username)}">${esc(s.username)}</option>`).join("");
-      sel.value = state.ownerFilter;
-    }
+    if (!sel) return;
+    const list = S.employees();
+    sel.innerHTML =
+      '<option value="all">সবাই</option>' +
+      list.map((s) => `<option value="${esc(s.username)}">${esc(s.username)}</option>`).join("");
+    sel.value = state.ownerFilter;
   }
 
-  /* ---------------- LIVE UPDATES (SSE) ---------------- */
-  function setLive(on) {
-    const d = $("#live-dot");
-    if (d) d.classList.toggle("off", !on);
-  }
-
-  function startLive() {
-    stopLive();
-    if (typeof EventSource === "undefined") return pollFallback();
-    try {
-      const es = new EventSource("/api/events");
-      state.es = es;
-      es.addEventListener("hello", () => setLive(true));
-      es.addEventListener("products", async () => { await loadProducts(); toast("পণ্য তালিকা আপডেট হয়েছে", "info", 1800); });
-      es.addEventListener("settings", async () => { await loadSettings(); if (state.view === "settings") fillSettings(); });
-      es.addEventListener("employees", async () => { await loadStaff(); if (state.view === "staff") renderStaffManage(); });
-      es.onerror = () => { setLive(false); };
-    } catch (e) { pollFallback(); }
-  }
-
-  function stopLive() {
-    if (state.es) { try { state.es.close(); } catch (e) {} state.es = null; }
-    setLive(false);
-  }
-
-  /* simple safety-net poll if SSE is blocked by a proxy */
-  function pollFallback() {
-    clearInterval(state.pollTimer);
-    state.pollTimer = setInterval(async () => {
-      if (!state.user) return;
-      try { await loadProducts(); setLive(true); } catch (e) { setLive(false); }
-    }, 8000);
-  }
-
-  /* ---------------- PRODUCTS (POS view) ---------------- */
-  const priceFor = (p, s) => Number(p["price_" + String(s).toLowerCase()] || 0) || 0;
-
+  /* ---------------- PRODUCTS (POS) ---------------- */
   function renderProducts() {
     const wrap = $("#products-list");
     if (!wrap) return;
     const term = ($("#product-search").value || "").trim().toLowerCase();
-    const list = term ? state.products.filter((p) => String(p.name || "").toLowerCase().includes(term)) : state.products;
+    const list = term
+      ? state.products.filter((p) => String(p.name || "").toLowerCase().includes(term))
+      : state.products;
 
     if (!list.length) {
       wrap.innerHTML = `<div class="empty-state">${svg(term ? "search" : "cup", 56)}
@@ -352,13 +251,15 @@
 
     wrap.innerHTML = list
       .map((p) => {
-        const sizes = ["S", "M", "L"].map((s) => {
-          const pr = priceFor(p, s);
-          return `<button class="size-btn" ${pr > 0 ? "" : "disabled"} data-pid="${esc(p.id)}" data-size="${s}" data-price="${pr}">
-              <span class="size-label">${s}</span>
-              <span class="size-price">${pr > 0 ? money(pr) : "—"}</span>
-            </button>`;
-        }).join("");
+        const sizes = ["S", "M", "L"]
+          .map((s) => {
+            const pr = S.priceFor(p, s);
+            return `<button class="size-btn" ${pr > 0 ? "" : "disabled"} data-pid="${esc(p.id)}" data-size="${s}" data-price="${pr}">
+                <span class="size-label">${s}</span>
+                <span class="size-price">${pr > 0 ? money(pr) : "—"}</span>
+              </button>`;
+          })
+          .join("");
         return `<div class="product-card" data-pid="${esc(p.id)}">
             <div class="product-header">
               <span class="product-name">${esc(p.name)}</span>
@@ -389,6 +290,7 @@
     renderCart();
   }
 
+  const removeLine = (key) => { state.cart = state.cart.filter((l) => l.key !== key); renderCart(); };
   const cartCount = () => state.cart.reduce((s, l) => s + l.qty, 0);
   const cartTotal = () => state.cart.reduce((s, l) => s + l.qty * l.price, 0);
 
@@ -470,17 +372,20 @@
     btn.innerHTML = `${svg("info", 18)} সেভ হচ্ছে...`;
 
     try {
-      const res = await api("/invoices", {
-        method: "POST",
-        body: { customer, paid, lines: state.cart.map((l) => ({ item: l.item, size: l.size, qty: l.qty, price: l.price })) },
-      });
-      // server returns the authoritative numbers
+      const res = S.createInvoice(
+        {
+          customer,
+          paid,
+          lines: state.cart.map((l) => ({ item: l.item, size: l.size, qty: l.qty, price: l.price })),
+        },
+        state.user.username
+      );
       state.cart = [];
       renderCart();
       $("#customer-name").value = "Walk-in Customer";
       $("#amount-paid").value = "0";
       if (state.settings.auto_print) openReceipt(res);
-      else { toast("বিল সেভ হয়েছে", "success"); loadTodayBills(); }
+      else toast("বিল সেভ হয়েছে", "success");
     } catch (e) {
       toast(e.message || "বিল সেভ করা যায়নি", "error");
     } finally {
@@ -494,12 +399,14 @@
   function receiptHTML(payload, s) {
     const inv = payload.invoice;
     const items = payload.items || [];
-    const rows = items.map((i) => `<tr>
-        <td class="item-name">${esc(i.item)}${i.size ? ` <span class="item-size">(${esc(i.size)})</span>` : ""}</td>
-        <td class="qty">${esc(i.qty)}</td>
-        <td class="price">${money(i.price)}</td>
-        <td class="subtotal">${money(Number(i.qty) * Number(i.price))}</td>
-      </tr>`).join("");
+    const rows = items
+      .map((i) => `<tr>
+          <td class="item-name">${esc(i.item)}${i.size ? ` <span class="item-size">(${esc(i.size)})</span>` : ""}</td>
+          <td class="qty">${esc(i.qty)}</td>
+          <td class="price">${money(i.price)}</td>
+          <td class="subtotal">${money(Number(i.qty) * Number(i.price))}</td>
+        </tr>`)
+      .join("");
 
     const diff = Number(inv.change || 0);
     const isDue = diff < 0;
@@ -533,9 +440,9 @@
   function openReceipt(payload) {
     $("#receipt-container").innerHTML =
       receiptHTML(payload, state.settings) +
-      `<div class="no-print" style="display:flex;gap:8px;margin-top:16px;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-primary" id="rp-print" style="flex:1;min-width:120px">${svg("print", 18)} প্রিন্ট করুন</button>
-        <button class="btn btn-secondary" id="rp-close" style="flex:1;min-width:120px">${svg("back", 18)} ফিরে যান</button>
+      `<div class="no-print receipt-actions">
+        <button class="btn btn-primary" id="rp-print">${svg("print", 18)} প্রিন্ট করুন</button>
+        <button class="btn btn-secondary" id="rp-close">${svg("back", 18)} ফিরে যান</button>
       </div>`;
     showPage("print-page");
     window.scrollTo(0, 0);
@@ -550,27 +457,22 @@
   }
 
   /* ---------------- TODAY'S BILLS ---------------- */
-  async function loadTodayBills() {
+  function renderBills() {
     const list = $("#bills-list");
-    list.innerHTML = `<div class="loading-state">লোড হচ্ছে...</div>`;
-    try {
-      const qs = new URLSearchParams({ date: todayStr() });
-      if (state.user.role === "owner" && state.ownerFilter !== "all") qs.set("seller", state.ownerFilter);
-      const rows = (await api("/invoices?" + qs.toString())) || [];
-      renderBills(rows);
-    } catch (e) {
-      list.innerHTML = `<div class="empty-state">${svg("alert", 48)}<p>${esc(e.message)}</p></div>`;
-    }
-  }
+    const rows = S.invoices({
+      date: S.todayStr(),
+      seller: state.user.role === "owner" ? state.ownerFilter : undefined,
+      username: state.user.username,
+      role: state.user.role,
+    });
 
-  function renderBills(rows) {
-    const list = $("#bills-list");
     if (!rows.length) {
       list.innerHTML = `<div class="empty-state">${svg("receipt", 56)}<p>আজ কোনো বিল পাওয়া যায়নি</p></div>`;
       return;
     }
+
     const isOwner = state.user.role === "owner";
-    const grand = rows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+    const grand = rows.reduce((s, r) => s + Number(r.total || 0), 0);
 
     list.innerHTML =
       `<div class="bill-card summary-card">
@@ -579,25 +481,28 @@
           <div class="bill-total" style="color:var(--color-primary)">${money(grand)}</div>
         </div>
       </div>` +
-      rows.map((r) => `<div class="bill-card" data-inv="${esc(r.invoice_no)}">
-        <div class="bill-header">
-          <div>
-            <div class="bill-no">${esc(r.invoice_no)}</div>
-            <div class="bill-time">${svg("info", 13)} ${esc(prettyTime(r.time_disp))}</div>
+      rows
+        .map((r) => `<div class="bill-card">
+          <div class="bill-header">
+            <div>
+              <div class="bill-no">${esc(r.invoice_no)}</div>
+              <div class="bill-time">${svg("info", 13)} ${esc(prettyTime(r.time_disp))}</div>
+            </div>
+            ${isOwner ? `<span class="bill-seller">${esc(r.seller)}</span>` : ""}
+            <div class="bill-total">${money(r.total)}</div>
           </div>
-          ${isOwner ? `<span class="bill-seller">${esc(r.seller)}</span>` : ""}
-          <div class="bill-total">${money(r.total)}</div>
-        </div>
-        <div class="bill-customer">${svg("user", 13)} ${esc(r.customer || "Walk-in Customer")}</div>
-        <div class="bill-actions">
-          <button class="bill-btn primary" data-reprint="${esc(r.invoice_no)}">${svg("print", 15)} রিপ্রিন্ট</button>
-        </div>
-      </div>`).join("");
+          <div class="bill-customer">${svg("user", 13)} ${esc(r.customer || "Walk-in Customer")}</div>
+          <div class="bill-actions">
+            <button class="bill-btn primary" data-reprint="${esc(r.invoice_no)}">${svg("print", 15)} রিপ্রিন্ট</button>
+            ${isOwner ? `<button class="bill-btn danger" data-del-inv="${esc(r.invoice_no)}">${svg("trash", 15)} ডিলিট</button>` : ""}
+          </div>
+        </div>`)
+        .join("");
   }
 
-  async function reprint(invoiceNo) {
+  function reprint(invoiceNo) {
     try {
-      const res = await api("/invoices/" + encodeURIComponent(invoiceNo));
+      const res = S.invoiceWithItems(invoiceNo, state.user.username, state.user.role);
       const auto = state.settings.auto_print;
       state.settings.auto_print = true; // reprint always opens the print dialog
       openReceipt(res);
@@ -607,28 +512,41 @@
     }
   }
 
+  async function deleteInvoice(no) {
+    const ok = await confirmDialog(`বিল ${no} মুছে ফেলবেন?`, "বিল ডিলিট");
+    if (!ok) return;
+    try {
+      S.deleteInvoice(no);
+      toast("বিল মুছে ফেলা হয়েছে", "success");
+    } catch (e) { toast(e.message, "error"); }
+  }
+
   /* ---------------- PRODUCTS MANAGEMENT ---------------- */
   function renderProductsManage() {
     const wrap = $("#products-manage-list");
     if (!state.products.length) {
       wrap.innerHTML = `<div class="empty-state">${svg("cup", 56)}<p>কোনো পণ্য নেই</p>
-        <button class="btn btn-primary" onclick="document.getElementById('new-product-btn').click()">+ প্রথম পণ্য যোগ করুন</button></div>`;
+        <button type="button" class="btn btn-primary" data-open-new-product>+ প্রথম পণ্য যোগ করুন</button></div>`;
       return;
     }
-    wrap.innerHTML = state.products.map((p) => `<div class="manage-row" data-id="${esc(p.id)}">
+    wrap.innerHTML = state.products
+      .map(
+        (p) => `<div class="manage-row" data-id="${esc(p.id)}">
         <div class="manage-main">
           <div class="manage-name">${esc(p.name)}</div>
           <div class="manage-prices">
-            <span class="chip">S ${money(priceFor(p, "S"))}</span>
-            <span class="chip">M ${money(priceFor(p, "M"))}</span>
-            <span class="chip">L ${money(priceFor(p, "L"))}</span>
+            <span class="chip">S ${money(S.priceFor(p, "S"))}</span>
+            <span class="chip">M ${money(S.priceFor(p, "M"))}</span>
+            <span class="chip">L ${money(S.priceFor(p, "L"))}</span>
           </div>
         </div>
         <div class="manage-actions">
           <button class="icon-btn-sm" data-edit-product="${esc(p.id)}" aria-label="এডিট">${svg("edit", 16)}</button>
           <button class="icon-btn-sm danger" data-del-product="${esc(p.id)}" aria-label="ডিলিট">${svg("trash", 16)}</button>
         </div>
-      </div>`).join("");
+      </div>`
+      )
+      .join("");
   }
 
   function openProductModal(id) {
@@ -643,7 +561,7 @@
     $("#p-name").focus();
   }
 
-  async function saveProduct(e) {
+  function saveProduct(e) {
     e.preventDefault();
     const body = {
       name: $("#p-name").value.trim(),
@@ -651,12 +569,11 @@
       price_m: $("#p-m").value || 0,
       price_l: $("#p-l").value || 0,
     };
-    if (!body.name) return toast("পণ্যের নাম লিখুন", "warning");
     try {
-      if (state.editingProductId) await api("/products/" + state.editingProductId, { method: "PUT", body });
-      else await api("/products", { method: "POST", body });
+      if (state.editingProductId) S.updateProduct(state.editingProductId, body);
+      else S.addProduct(body);
       closeModal($("#product-modal"));
-      await loadProducts();
+      refreshData();
       renderProductsManage();
       toast("পণ্য সেভ হয়েছে", "success");
     } catch (err) { toast(err.message, "error"); }
@@ -667,21 +584,24 @@
     const ok = await confirmDialog(`"${p ? p.name : "পণ্য"}" মুছে ফেলবেন? পুরনো বিলে থাকবে।`, "পণ্য মুছে ফেলুন");
     if (!ok) return;
     try {
-      await api("/products/" + id, { method: "DELETE" });
-      await loadProducts();
+      S.deleteProduct(id);
+      refreshData();
       renderProductsManage();
       toast("পণ্য মুছে ফেলা হয়েছে", "success");
-    } catch (err) { toast(err.message, "error"); }
+    } catch (e) { toast(e.message, "error"); }
   }
 
   /* ---------------- STAFF MANAGEMENT ---------------- */
   function renderStaffManage() {
     const wrap = $("#staff-manage-list");
-    if (!state.staff.length) {
+    const list = S.employees();
+    if (!list.length) {
       wrap.innerHTML = `<div class="empty-state">${svg("users", 56)}<p>কোনো স্টাফ নেই</p></div>`;
       return;
     }
-    wrap.innerHTML = state.staff.map((s) => `<div class="manage-row${s.active === false ? " disabled-row" : ""}" data-id="${esc(s.id)}">
+    wrap.innerHTML = list
+      .map(
+        (s) => `<div class="manage-row${s.active === false ? " disabled-row" : ""}" data-id="${esc(s.id)}">
         <div class="manage-main">
           <div class="manage-name">
             ${esc(s.username)}
@@ -691,14 +611,16 @@
         </div>
         <div class="manage-actions">
           <button class="icon-btn-sm" data-edit-staff="${esc(s.id)}" aria-label="এডিট">${svg("edit", 16)}</button>
-          <button class="icon-btn-sm danger" data-del-staff="${esc(s.id)}" aria-label="ডিলিট">${svg("trash", 16)}</button>
+          ${s.username === state.user.username ? "" : `<button class="icon-btn-sm danger" data-del-staff="${esc(s.id)}" aria-label="ডিলিট">${svg("trash", 16)}</button>`}
         </div>
-      </div>`).join("");
+      </div>`
+      )
+      .join("");
   }
 
   function openStaffModal(id) {
     state.editingStaffId = id || null;
-    const s = id ? state.staff.find((x) => x.id === id) : null;
+    const s = id ? S.employees().find((x) => x.id === id) : null;
     $("#staff-modal-title").textContent = s ? "স্টাফ এডিট করুন" : "নতুন স্টাফ";
     $("#s-username").value = s ? s.username : "";
     $("#s-username").disabled = !!s;
@@ -709,64 +631,69 @@
     (s ? $("#s-password") : $("#s-username")).focus();
   }
 
-  async function saveStaff(e) {
+  function saveStaff(e) {
     e.preventDefault();
-    const body = {
-      role: $("#s-role").value,
-    };
+    const body = { role: $("#s-role").value };
     const pw = $("#s-password").value.trim();
     if (pw) body.password = pw;
-
     try {
       if (state.editingStaffId) {
-        await api("/employees/" + state.editingStaffId, { method: "PUT", body });
+        S.updateEmployee(state.editingStaffId, body);
       } else {
         body.username = $("#s-username").value.trim();
         body.password = pw;
         if (!body.username) return toast("ইউজারনেম লিখুন", "warning");
         if (!body.password) return toast("পাসওয়ার্ড লিখুন", "warning");
-        await api("/employees", { method: "POST", body });
+        S.addEmployee(body);
       }
       closeModal($("#staff-modal"));
-      await loadStaff();
       renderStaffManage();
+      renderStaffFilter();
       toast("সেভ হয়েছে", "success");
     } catch (err) { toast(err.message, "error"); }
   }
 
   async function deleteStaff(id) {
-    const s = state.staff.find((x) => x.id === id);
+    const s = S.employees().find((x) => x.id === id);
     const ok = await confirmDialog(`"${s ? s.username : ""}" কে মুছে ফেলবেন?`, "স্টাফ মুছে ফেলুন");
     if (!ok) return;
     try {
-      await api("/employees/" + id, { method: "DELETE" });
-      await loadStaff();
+      S.deleteEmployee(id, state.user.username);
       renderStaffManage();
+      renderStaffFilter();
       toast("মুছে ফেলা হয়েছে", "success");
-    } catch (err) { toast(err.message, "error"); }
+    } catch (e) { toast(e.message, "error"); }
   }
 
   /* ---------------- SETTINGS ---------------- */
   function fillSettings() {
-    $("#shop-name").value = state.settings.shop_name || "";
-    $("#shop-address").value = state.settings.shop_address || "";
-    $("#shop-phone").value = state.settings.shop_phone || "";
-    $("#auto-print").checked = !!state.settings.auto_print;
-    $("#show-thankyou").checked = !!state.settings.show_thankyou;
+    const s = S.settings();
+    $("#shop-name").value = s.shop_name || "";
+    $("#shop-address").value = s.shop_address || "";
+    $("#shop-phone").value = s.shop_phone || "";
+    $("#auto-print").checked = !!s.auto_print;
+    $("#show-thankyou").checked = !!s.show_thankyou;
+    updateStorageUsage();
   }
 
-  async function saveSettings(e) {
+  function updateStorageUsage() {
+    const el = $("#storage-usage");
+    if (!el) return;
+    const bytes = S.usageBytes();
+    const kb = (bytes / 1024).toFixed(1);
+    const invoices = S.get().invoices.length;
+    el.textContent = `এখন ডেটা: ${kb} KB · মোট বিল: ${invoices}টি`;
+  }
+
+  function saveSettings(e) {
     e.preventDefault();
     try {
-      state.settings = await api("/settings", {
-        method: "PUT",
-        body: {
-          shop_name: $("#shop-name").value.trim(),
-          shop_address: $("#shop-address").value.trim(),
-          shop_phone: $("#shop-phone").value.trim(),
-          auto_print: $("#auto-print").checked,
-          show_thankyou: $("#show-thankyou").checked,
-        },
+      state.settings = S.saveSettings({
+        shop_name: $("#shop-name").value.trim(),
+        shop_address: $("#shop-address").value.trim(),
+        shop_phone: $("#shop-phone").value.trim(),
+        auto_print: $("#auto-print").checked,
+        show_thankyou: $("#show-thankyou").checked,
       });
       const msg = $("#settings-message");
       msg.className = "settings-message success";
@@ -776,24 +703,47 @@
     } catch (err) { toast(err.message, "error"); }
   }
 
-  async function restoreBackup(file) {
-    const ok = await confirmDialog("বর্তমান সব ডেটা মুছে ফাইলের ডেটা বসবে। চালিয়ে যাবেন?", "ফিরিয়ে আনুন");
-    if (!ok) return;
+  /* ---------------- BACKUP / RESTORE ---------------- */
+  function exportBackup() {
+    try {
+      const blob = new Blob([S.exportJSON()], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `livefruitjuice-backup-${S.todayStr()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("ব্যাকআপ ফাইল ডাউনলোড হয়েছে", "success");
+    } catch (e) {
+      toast("ডাউনলোড করা যায়নি", "error");
+    }
+  }
+
+  async function importBackup(file) {
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
-      await api("/restore", { method: "POST", body: data });
-      toast("ফাইল থেকে ডেটা ফিরিয়ে আনা হয়েছে", "success");
-      setTimeout(() => location.reload(), 900);
+      if (S.importJSON(text)) {
+        toast("ডেটা ফিরিয়ে আনা হয়েছে", "success");
+        setTimeout(() => location.reload(), 800);
+      }
     } catch (e) {
-      toast("ফাইলটি পড়া যায়নি", "error");
+      toast(e.message || "ফাইলটি পড়া যায়নি", "error");
+    }
+  }
+
+  async function resetAll() {
+    if (S.resetAll()) {
+      toast("সব ডেটা মুছে ফেলা হয়েছে", "success");
+      setTimeout(() => location.reload(), 700);
     }
   }
 
   /* ---------------- WIRING ---------------- */
   function wire() {
     $("#login-form").addEventListener("submit", handleLogin);
-    $("#logout-btn").addEventListener("click", logout);
+    $("#logout-btn").addEventListener("click", () => logout(false));
 
     $(".toggle-password").addEventListener("click", (e) => {
       const b = e.currentTarget;
@@ -809,9 +759,11 @@
     });
     $("#sidebar-overlay").addEventListener("click", closeSidebar);
 
-    $$(".nav-item").forEach((n) => n.addEventListener("click", (e) => { e.preventDefault(); setView(n.dataset.page); }));
-    $("#product-search").addEventListener("input", renderProducts);
+    $$(".nav-item").forEach((n) =>
+      n.addEventListener("click", (e) => { e.preventDefault(); setView(n.dataset.page); })
+    );
 
+    $("#product-search").addEventListener("input", renderProducts);
     $("#products-list").addEventListener("click", (e) => {
       const b = e.target.closest(".size-btn");
       if (b && !b.disabled) addToCart(b.dataset.pid, b.dataset.size, b.dataset.price);
@@ -828,11 +780,17 @@
 
     $("#amount-paid").addEventListener("input", updateTotals);
     $("#complete-bill-btn").addEventListener("click", completeBill);
-    $("#staff-filter").addEventListener("change", (e) => { state.ownerFilter = e.target.value; loadTodayBills(); });
+
+    $("#staff-filter").addEventListener("change", (e) => {
+      state.ownerFilter = e.target.value;
+      renderBills();
+    });
 
     $("#bills-list").addEventListener("click", (e) => {
-      const b = e.target.closest("[data-reprint]");
-      if (b) reprint(b.dataset.reprint);
+      const rp = e.target.closest("[data-reprint]");
+      const del = e.target.closest("[data-del-inv]");
+      if (rp) reprint(rp.dataset.reprint);
+      else if (del) deleteInvoice(del.dataset.delInv);
     });
 
     // product management
@@ -840,6 +798,7 @@
     $("#product-form").addEventListener("submit", saveProduct);
     $("#p-cancel").addEventListener("click", () => closeModal($("#product-modal")));
     $("#products-manage-list").addEventListener("click", (e) => {
+      if (e.target.closest("[data-open-new-product]")) return openProductModal(null);
       const ed = e.target.closest("[data-edit-product]");
       const del = e.target.closest("[data-del-product]");
       if (ed) openProductModal(ed.dataset.editProduct);
@@ -857,13 +816,16 @@
       else if (del) deleteStaff(del.dataset.delStaff);
     });
 
-    // settings
+    // settings + backup
     $("#settings-form").addEventListener("submit", saveSettings);
-    $("#restore-input").addEventListener("change", (e) => {
-      if (e.target.files[0]) restoreBackup(e.target.files[0]);
+    $("#export-btn").addEventListener("click", exportBackup);
+    $("#import-input").addEventListener("change", (e) => {
+      if (e.target.files[0]) importBackup(e.target.files[0]);
     });
+    $("#reset-btn").addEventListener("click", resetAll);
+    $("#import-from-login").addEventListener("click", () => $("#import-input").click());
 
-    // keyboard shortcuts
+    // keyboard
     document.addEventListener("keydown", (e) => {
       if (!$("#billing-page").classList.contains("active")) return;
       if (e.target.matches("input, textarea, select")) {
@@ -877,40 +839,34 @@
     window.addEventListener("afterprint", () => {
       if ($("#print-page").classList.contains("active") && state.settings.auto_print) closePrint();
     });
-  }
 
-  function removeLine(key) {
-    state.cart = state.cart.filter((l) => l.key !== key);
-    renderCart();
+    // keep multiple tabs / windows of this device in sync
+    window.addEventListener("storage", (e) => {
+      if (e.key === S.KEY) {
+        S.load();
+        if (state.user) refreshData();
+        if (state.view === "today-bills") renderBills();
+        if (state.view === "products") renderProductsManage();
+        if (state.view === "staff") renderStaffManage();
+        if (state.view === "settings") fillSettings();
+        toast("অন্য উইন্ডোতে ডেটা বদলেছে", "info", 1800);
+      }
+    });
   }
 
   /* ---------------- BOOT ---------------- */
-  async function checkServer() {
-    const el = $("#server-status");
-    try {
-      const res = await fetch("/api/health");
-      if (res.ok) { el.textContent = ""; return true; }
-    } catch (e) { /* ignore */ }
-    el.innerHTML = '<span style="color:var(--color-danger)">সার্ভার পৌঁছানো যায়নি</span>';
-    return false;
-  }
-
   function init() {
+    S.load();
     wire();
     paintIcons();
     $("#logo-cup").innerHTML = svg("cup", 56, 'style="color:var(--color-primary)"');
     renderProducts();
     renderCart();
-    checkServer();
 
-    if (loadToken()) {
-      // validate the stored session
-      api("/auth/me")
-        .then((me) => {
-          state.user = { username: me.username, role: me.role };
-          return enterApp();
-        })
-        .catch(() => { setToken(null); showPage("login-page"); });
+    const session = S.readSession();
+    if (session) {
+      state.user = session;
+      enterApp();
     } else {
       showPage("login-page");
     }
@@ -919,5 +875,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
-  window.__LFJ = { state, api, addToCart, cartTotal };
+  window.__LFJ = { state, S };
 })();

@@ -1,17 +1,27 @@
 {
-  "name": "Live Fruit Juice - Staff Billing",
-  "short_name": "Live Fruit Juice",
-  "description": "Professional POS billing system for juice shop",
-  "start_url": "/",
+  "name": "Live Fruit Juice — স্টাফ বিলিং",
+  "short_name": "Live Fruit",
+  "description": "দোকানের স্টাফ বিলিং সিস্টেম",
+  "lang": "bn",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#f5f9f5",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
   "theme_color": "#2d5a2c",
-  "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥤</text></svg>",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='36' fill='%232d5a2c'/><text x='96' y='132' font-size='104' text-anchor='middle'>🥤</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='96' fill='%232d5a2c'/><text x='256' y='352' font-size='280' text-anchor='middle'>🥤</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }
