@@ -20,6 +20,32 @@
 <body>
 <div id="app">
 
+  <!-- ================= RECOVERY BANNER ================= -->
+  <div id="recovery-banner" class="banner danger hidden">
+    <span class="banner-icon" data-icon="alert"></span>
+    <div class="banner-text">
+      <strong id="recovery-title">আগের ডেটা পাওয়া যায়নি!</strong>
+      <span id="recovery-detail">ব্রাউজারের ডেটা মুছে গেছে বা ক্ষতিগ্রস্ত হয়েছে।</span>
+    </div>
+    <div class="banner-actions">
+      <button type="button" class="btn btn-sm btn-light" id="recover-btn">স্ন্যাপশট থেকে ফেরান</button>
+      <button type="button" class="btn btn-sm btn-ghost" id="recover-dismiss">পরে</button>
+    </div>
+  </div>
+
+  <!-- ================= BACKUP REMINDER ================= -->
+  <div id="backup-banner" class="banner warn hidden">
+    <span class="banner-icon" data-icon="info"></span>
+    <div class="banner-text">
+      <strong id="backup-reminder-text">ব্যাকআপ নেওয়া হয়নি</strong>
+      <span>সেটিংস থেকে এক ক্লিকে ব্যাকআপ ফাইল নিন — ডেটা চলে গেলে ফিরিয়ে আনা যাবে।</span>
+    </div>
+    <div class="banner-actions">
+      <button type="button" class="btn btn-sm btn-light" id="backup-now-btn">ব্যাকআপ নিন</button>
+      <button type="button" class="btn btn-sm btn-ghost" id="backup-dismiss">পরে</button>
+    </div>
+  </div>
+
   <!-- ================= LOGIN ================= -->
   <div id="login-page" class="page active">
     <div class="login-container">
@@ -236,6 +262,15 @@
               </label>
             </div>
             <p class="help-text" id="storage-usage" style="margin-top:12px"></p>
+            <p class="help-text" id="last-backup-info"></p>
+
+            <h3 style="margin-top:24px">স্বয়ংক্রিয় সুরক্ষা কপি</h3>
+            <p class="help-text">
+              প্রতিটি পরিবর্তনের সময় অ্যাপ নিজে থেকেই ডেটার একটি কপি রাখে (সর্বোচ্চ
+              <span id="snap-max">৫</span>টি)। ব্রাউজারের ডেটা মুছে গেলেও এখান থেকে ফিরিয়ে আনা যাবে।
+            </p>
+            <div id="snapshot-list" class="snapshot-list"></div>
+
             <div class="danger-zone">
               <button type="button" class="btn btn-danger" id="reset-btn">সব ডেটা মুছে নতুন করে শুরু</button>
             </div>

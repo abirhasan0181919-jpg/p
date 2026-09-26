@@ -8,8 +8,16 @@
   "use strict";
 
   const KEY = "lfj_db_v1";
+  const SNAP_KEY = "lfj_snapshots_v1";
+  const MARK_KEY = "lfj_last_export_v1";
   const SALT = "livefruitjuice_salt_";
   const SESSION_KEY = "lfj_session_v1";
+
+  /* rolling safety snapshots — kept separately so a corrupt/cleared main
+     database can still be recovered from inside the app */
+  const MAX_SNAPSHOTS = 5;
+  const SNAPSHOT_MIN_INTERVAL = 60 * 1000;      // at most one per minute
+  const MAX_TOTAL_BACKUP_BYTES = 2 * 1024 * 1024; // leave room in the ~5MB quota
 
   /* ---------- SHA-256 (sync, works on file:// too) ---------- */
   function utf8(str) {
@@ -226,6 +234,8 @@
 
   /* ---------- the store ---------- */
   let db = null;
+  // set when load() had to repair the data, so the UI can tell the user
+  let recovery = null;
   const listeners = new Set();
 
   function notify(reason) {
@@ -242,16 +252,45 @@
   function load() {
     let raw = null;
     try { raw = localStorage.getItem(KEY); } catch (e) {}
+    recovery = null;
     if (raw) {
       try {
         db = normalise(JSON.parse(raw));
+        // a corrupt read is recoverable: fall back to the newest snapshot
+        if (!db) throw new Error("unreadable");
       } catch (e) {
-        console.error("ডেটা পড়া যায়নি, নতুন করে শুরু:", e);
-        db = freshDB();
+        console.error("ডেটা পড়া যায়নি, স্ন্যাপশট থেকে ফিরিয়ে নেওয়ার চেষ্টা:", e.message);
+        const list = readSnapshots();
+        let recovered = null;
+        for (const s of list) {
+          try { recovered = normalise(JSON.parse(s.data)); break; } catch (e2) {}
+        }
+        if (recovered) {
+          db = recovered;
+          persist();
+          recovery = { invoices: db.invoices.length, from: "snapshot" };
+          notify("recovered");
+        } else {
+          db = freshDB();
+          persist();
+        }
       }
     } else {
-      db = freshDB();
-      persist();
+      // nothing in the main key — do not silently start empty if we can recover
+      const list = readSnapshots();
+      let recovered = null;
+      for (const s of list) {
+        try { recovered = normalise(JSON.parse(s.data)); break; } catch (e) {}
+      }
+      if (recovered) {
+        db = recovered;
+        persist();
+        recovery = { invoices: db.invoices.length, from: "snapshot" };
+        notify("recovered");
+      } else {
+        db = freshDB();
+        persist();
+      }
     }
     return db;
   }
@@ -261,21 +300,38 @@
       localStorage.setItem(KEY, JSON.stringify(db));
       return true;
     } catch (e) {
-      console.error("সেভ করা যায়নি", e);
       const quota = e && /quota|exceed/i.test(e.name + e.message);
-      throw new Error(
-        quota
-          ? "স্টোরেজ পূর্ণ — পুরনো বিল ডিউলেট করুন বা ব্যাকআপ ফাইল নিন"
-          : "সেভ করা যায়নি (ব্রাউজারের স্টোরেজ বন্ধ থাকতে পারে)"
-      );
+      if (!quota) {
+        throw new Error("সেভ করা যায়নি (ব্রাউজারের স্টোরেজ বন্ধ থাকতে পারে)");
+      }
+      // out of room: drop the safety copies first and try once more, because
+      // losing a snapshot is far better than losing a sale
+      try { clearSnapshots(); } catch (e2) {}
+      try {
+        localStorage.setItem(KEY, JSON.stringify(db));
+        return true;
+      } catch (e2) {
+        throw new Error(
+          "স্টোরেজ পূর্ণ — ব্যাকআপ ফাইল নিয়ে পুরনো বিল ডিউলেট করুন"
+        );
+      }
     }
   }
 
   /** read-only accessor */
   const get = () => db || load();
 
-  function commit(reason) {
-    persist();
+  function commit(reason, force, undo) {
+    try {
+      persist();
+    } catch (e) {
+      // the write failed, so undo the in-memory change too — otherwise memory
+      // and storage disagree and the row reappears on the next successful save
+      try { if (undo) undo(); } catch (e2) {}
+      throw e;
+    }
+    // safety copy first — if persist() throws we must not have lost the old one
+    try { takeSnapshot(reason, force); } catch (e) {}
     notify(reason || "change");
     // keep other tabs of the same device in sync
     try {
@@ -459,9 +515,15 @@
     const items = lines.map((l, i) => ({ id: uid(), invoice_no, seq: i, ...l }));
 
     const d = get();
+    const invAt = d.invoices.length;
+    const itemAt = d.invoice_items.length;
     d.invoices.push(invoice);
     d.invoice_items.push(...items);
-    commit("invoices");
+    // bills are the thing people would actually miss, so never throttle these
+    commit("invoices", true, () => {
+      d.invoices.length = invAt;
+      d.invoice_items.length = itemAt;
+    });
     return { invoice, items };
   }
 
@@ -471,7 +533,14 @@
     const effSeller = role === "owner" ? seller : username;
     if (date) rows = rows.filter((r) => r.date_disp === date);
     if (effSeller) rows = rows.filter((r) => r.seller === effSeller);
-    return rows.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 500);
+    return rows.slice()
+      // newest first; invoice_no breaks ties because several bills can share a
+      // created_at millisecond on a busy counter
+      .sort((a, b) =>
+        String(b.created_at).localeCompare(String(a.created_at)) ||
+        String(b.invoice_no).localeCompare(String(a.invoice_no))
+      )
+      .slice(0, 500);
   }
 
   function invoiceWithItems(invoiceNo, username, role) {
@@ -486,10 +555,14 @@
     const d = get();
     const i = d.invoices.findIndex((r) => r.invoice_no === invoiceNo);
     if (i < 0) throw new Error("বিল পাওয়া যায়নি");
-    d.invoices.splice(i, 1);
+    const removed = d.invoices.splice(i, 1)[0];
+    const removedItems = [];
     for (let k = d.invoice_items.length - 1; k >= 0; k--)
-      if (d.invoice_items[k].invoice_no === invoiceNo) d.invoice_items.splice(k, 1);
-    commit("invoices");
+      if (d.invoice_items[k].invoice_no === invoiceNo) removedItems.push(...d.invoice_items.splice(k, 1));
+    commit("invoices", true, () => {
+      d.invoices.splice(i, 0, removed);
+      d.invoice_items.push(...removedItems);
+    });
   }
 
   function statsToday({ username, role } = {}) {
@@ -513,6 +586,7 @@
 
   /* ---------- backup / restore / reset ---------- */
   function exportJSON() {
+    markExported();
     return JSON.stringify(get(), null, 2);
   }
 
@@ -523,6 +597,7 @@
       `ফাইলে ${next.employees.length} জন স্টাফ, ${next.products.length}টি পণ্য, ${next.invoices.length}টি বিল আছে।\n` +
       "বর্তমান সব ডেটা মুছে যাবে। চালিয়ে যাবেন?"
     )) return false;
+    takeSnapshot("before-import");
     db = next;
     commit("restore");
     return true;
@@ -530,6 +605,7 @@
 
   function resetAll() {
     if (!confirm("সব ডেটা মুছে যাবে — পণ্য, স্টাফ, বিল সবকিছু। নিশ্চিত?")) return false;
+    takeSnapshot("before-reset", true);
     db = freshDB();
     saveSession(null);
     commit("reset");
@@ -540,8 +616,112 @@
     try { return new Blob([localStorage.getItem(KEY) || ""]).size; } catch (e) { return 0; }
   }
 
+  /* ---------- safety snapshots ---------- */
+  function readSnapshots() {
+    try {
+      const raw = localStorage.getItem(SNAP_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+
+  function writeSnapshots(list) {
+    try { localStorage.setItem(SNAP_KEY, JSON.stringify(list)); return true; }
+    catch (e) { return false; }
+  }
+
+  /**
+   * Saves the current database as a separate snapshot.
+   * Never throws — if there is not enough room we quietly skip it, because
+   * failing to snapshot must never block a real sale.
+   */
+  function takeSnapshot(reason, force) {
+    try {
+      const now = Date.now();
+      const list = readSnapshots();
+      if (!force && list.length && now - list[0].ts < SNAPSHOT_MIN_INTERVAL) return false;
+
+      // do not snapshot an empty/fresh database
+      const data = JSON.stringify(db);
+      if (!db || !db.invoices || !db.employees) return false;
+
+      const entry = { ts: now, reason: reason || "auto", invoices: db.invoices.length, data };
+      const next = [entry, ...list].slice(0, MAX_SNAPSHOTS);
+
+      // respect the storage budget: drop the oldest until it fits
+      let total = 0;
+      for (let i = next.length - 1; i >= 0; i--) {
+        total += next[i].data.length;
+        if (total > MAX_TOTAL_BACKUP_BYTES && i < next.length - 1) next.splice(i, 1);
+      }
+
+      if (writeSnapshots(next)) { forceSnapshotCheck(); return true; }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function snapshots() {
+    return readSnapshots()
+      .map((s) => ({ ts: s.ts, reason: s.reason, invoices: s.invoices, size: s.data.length }))
+      .sort((a, b) => b.ts - a.ts);
+  }
+
+  function restoreSnapshot(ts) {
+    const list = readSnapshots();
+    const hit = list.find((s) => s.ts === ts);
+    if (!hit) throw new Error("স্ন্যাপশট পাওয়া যায়নি");
+    const next = normalise(JSON.parse(hit.data), true);
+    takeSnapshot("before-restore", true);
+    db = next;
+    commit("restore");
+    return next;
+  }
+
+  function clearSnapshots() {
+    try { localStorage.removeItem(SNAP_KEY); } catch (e) {}
+  }
+
+  /** true when the database vanished but snapshots still exist */
+  function hasRecoverableData() {
+    let main = null;
+    try { main = localStorage.getItem(KEY); } catch (e) {}
+    if (main) return false;
+    return readSnapshots().some((s) => s.data);
+  }
+
+  /** what load() had to repair on the last load, or null if all was well */
+  const lastRecovery = () => (recovery ? { ...recovery } : null);
+
+  function markExported() {
+    try { localStorage.setItem(MARK_KEY, String(Date.now())); } catch (e) {}
+  }
+  function lastExport() {
+    try { return Number(localStorage.getItem(MARK_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
+  /** days since the user last downloaded a backup file (0 = never/just now) */
+  function daysSinceExport() {
+    const t = lastExport();
+    if (!t) return -1;
+    return Math.floor((Date.now() - t) / 86400000);
+  }
+
+  let warnedFull = false;
+  function forceSnapshotCheck() {
+    if (warnedFull) return;
+    try {
+      const used = usageBytes();
+      if (used > 4 * 1024 * 1024) {
+        warnedFull = true;
+        if (typeof console !== "undefined")
+          console.warn("[store] storage nearly full:", used, "bytes — advise a backup");
+      }
+    } catch (e) {}
+  }
+
   global.Store = {
-    KEY, SESSION_KEY, uid, todayStr, nowTime, num,
+    KEY, SNAP_KEY, SESSION_KEY, uid, todayStr, nowTime, num,
     sha256, hashPassword,
     load, get, onChange, usageBytes,
     login, saveSession, readSession,
@@ -550,6 +730,8 @@
     createInvoice, invoices, invoiceWithItems, deleteInvoice, statsToday, nextInvoiceNo,
     settings, saveSettings,
     exportJSON, importJSON, resetAll,
+    takeSnapshot, snapshots, restoreSnapshot, clearSnapshots, hasRecoverableData, lastRecovery,
+    markExported, lastExport, daysSinceExport, MAX_SNAPSHOTS,
     DEFAULT_SETTINGS,
   };
 })(typeof window !== "undefined" ? window : this);

@@ -214,6 +214,7 @@
     $$(".owner-only").forEach((el) => (el.style.display = isOwner ? "" : "none"));
     refreshData();
     setView("billing");
+    checkBackupReminder();
   }
 
   function refreshData() {
@@ -665,6 +666,134 @@
     } catch (e) { toast(e.message, "error"); }
   }
 
+  /* ---------------- RECOVERY / BACKUP SAFETY ---------------- */
+  const DISMISS_KEY = "lfj_banner_dismissed_v1";
+
+  function bannerDismissed(kind) {
+    try { return JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}")[kind] || 0; }
+    catch (e) { return 0; }
+  }
+  function dismissBanner(kind, days) {
+    try {
+      const all = JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}");
+      all[kind] = Date.now() + (days || 3) * 86400000;
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+
+  function showRecoveryBanner() {
+    // load() repairs the data silently, so the honest signal is that it did
+    const fixed = S.lastRecovery();
+    if (!fixed) {
+      // nothing to repair — but if snapshots exist while the main key is gone,
+      // load() failed to use them, so offer the manual path
+      if (!S.hasRecoverableData()) return;
+    }
+    const snaps = S.snapshots();
+    if (!snaps.length) return;
+    if (Date.now() < bannerDismissed("recovery")) return;
+    const newest = snaps[0];
+    if (fixed) {
+      $("#recovery-title").textContent = "আগের ডেটা ফিরিয়ে আনা হয়েছে";
+      $("#recovery-detail").textContent =
+        `ব্রাউজারের স্টোরেজ সমস্যার কারণে ডেটা নতুন করে লেখা হয়েছিল। সুরক্ষা কপি থেকে ${fixed.invoices}টি বিল ফিরে পাওয়া গেছে (${timeAgo(newest.ts)})। এখনই ব্যাকআপ ফাইল নিন।`;
+      // the data is already back, so restoring again would only throw away
+      // anything new — offer the backup instead
+      $("#recover-btn").textContent = "ব্যাকআপ নিন";
+      $("#recover-btn").dataset.mode = "backup";
+    } else {
+      $("#recovery-title").textContent = "আগের ডেটা পাওয়া যায়নি!";
+      $("#recovery-detail").textContent =
+        `ব্রাউজারের ডেটা মুছে গেছে বা ক্ষতিগ্রস্ত হয়েছে। সবচেয়ে নতুন সুরক্ষা কপিতে ${newest.invoices}টি বিল আছে (${timeAgo(newest.ts)})।`;
+      $("#recover-btn").textContent = "স্ন্যাপশট থেকে ফেরান";
+      $("#recover-btn").dataset.mode = "restore";
+    }
+    $("#recovery-banner").classList.remove("hidden");
+  }
+
+  async function doRecover() {
+    const snaps = S.snapshots();
+    if (!snaps.length) return toast("কোনো সুরক্ষা কপি নেই", "warning");
+    const ok = await confirmDialog(
+      `সবচেয়ে নতুন সুরক্ষা কপি (${timeAgo(snaps[0].ts)}, ${snaps[0].invoices}টি বিল) থেকে ডেটা ফেরানো হবে।\n` +
+      "বর্তমান ডেটা সেই কপি দিয়ে বদলে যাবে। চালিয়ে যাবেন?",
+      "ডেটা ফেরান"
+    );
+    if (!ok) return;
+    try {
+      S.restoreSnapshot(snaps[0].ts);
+      $("#recovery-banner").classList.add("hidden");
+      toast("ডেটা ফেরিয়ে আনা হয়েছে", "success");
+      setTimeout(() => location.reload(), 800);
+    } catch (e) {
+      toast(e.message || "ফেরানো যায়নি", "error");
+    }
+  }
+
+  function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return "এইমাত্র";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + " মিনিট আগে";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + " ঘণ্টা আগে";
+    const d = Math.floor(h / 24);
+    return d + " দিন আগে";
+  }
+
+  function checkBackupReminder() {
+    if (!state.user || state.user.role !== "owner") return;
+    const d = S.daysSinceExport();
+    const overdue = d === -1 ? true : d >= 7;   // never exported, or 7+ days old
+    if (!overdue) return;
+    if (Date.now() < bannerDismissed("backup")) return;
+    const el = $("#backup-banner");
+    $("#backup-reminder-text").textContent =
+      d === -1 ? "এখনো কোনো ব্যাকআপ ফাইল নেওয়া হয়নি" : `শেষ ব্যাকআপ ${d} দিন আগে হয়েছিল`;
+    el.classList.remove("hidden");
+  }
+
+  function renderSnapshots() {
+    const wrap = $("#snapshot-list");
+    const snaps = S.snapshots();
+    $("#snap-max").textContent = toBn(S.MAX_SNAPSHOTS);
+    if (!snaps.length) {
+      wrap.innerHTML = `<p class="help-text">এখনো কোনো সুরক্ষা কপি নেই। পণ্য বা স্টাফ পরিবর্তন করলে তৈরি হবে।</p>`;
+      return;
+    }
+    wrap.innerHTML = snaps
+      .map(
+        (s) => `<div class="snapshot-row">
+        <div class="snapshot-main">
+          <div class="snapshot-time">${timeAgo(s.ts)}</div>
+          <div class="snapshot-meta">${s.invoices}টি বিল · ${(s.size / 1024).toFixed(1)} KB · ${reasonText(s.reason)}</div>
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary" data-restore-snap="${s.ts}">ফেরান</button>
+      </div>`
+      )
+      .join("");
+  }
+
+  const reasonText = (r) =>
+    ({
+      auto: "স্বয়ংক্রিয়",
+      "before-import": "ইমপোর্টের আগে",
+      "before-reset": "রিসেটের আগে",
+      "before-restore": "রিস্টোরের আগে",
+    }[r] || "স্বয়ংক্রিয়");
+
+  const toBn = (n) => String(n).replace(/\d/g, (d) => "০১২৩৪৫৬৭৮৯"[d]);
+
+  async function restoreSnapshot(ts) {
+    const ok = await confirmDialog("এই সুরক্ষা কপি থেকে ডেটা ফেরানো হবে। চালিয়ে যাবেন?", "সুরক্ষা কপি ফেরান");
+    if (!ok) return;
+    try {
+      S.restoreSnapshot(ts);
+      toast("ডেটা ফেরিয়ে আনা হয়েছে", "success");
+      setTimeout(() => location.reload(), 800);
+    } catch (e) { toast(e.message, "error"); }
+  }
+
   /* ---------------- SETTINGS ---------------- */
   function fillSettings() {
     const s = S.settings();
@@ -682,7 +811,18 @@
     const bytes = S.usageBytes();
     const kb = (bytes / 1024).toFixed(1);
     const invoices = S.get().invoices.length;
-    el.textContent = `এখন ডেটা: ${kb} KB · মোট বিল: ${invoices}টি`;
+    const pct = Math.min(100, Math.round((bytes / (5 * 1024 * 1024)) * 100));
+    el.innerHTML = `এখন ডেটা: <b>${kb} KB</b> · মোট বিল: <b>${toBn(invoices)}</b>টি · স্টোরেজ ব্যবহার ${toBn(pct)}%`;
+
+    const li = $("#last-backup-info");
+    if (li) {
+      const d = S.daysSinceExport();
+      li.textContent =
+        d === -1
+          ? "এখনো কোনো ব্যাকআপ ফাইল ডাউনলোড করা হয়নি।"
+          : `শেষ ব্যাকআপ ফাইল: ${timeAgo(S.lastExport())}`;
+    }
+    renderSnapshots();
   }
 
   function saveSettings(e) {
@@ -825,6 +965,34 @@
     $("#reset-btn").addEventListener("click", resetAll);
     $("#import-from-login").addEventListener("click", () => $("#import-input").click());
 
+    // safety banners + snapshots
+    $("#recover-btn").addEventListener("click", () => {
+      if ($("#recover-btn").dataset.mode === "backup") {
+        exportBackup();
+        dismissBanner("recovery", 7);
+        $("#recovery-banner").classList.add("hidden");
+      } else {
+        doRecover();
+      }
+    });
+    $("#recover-dismiss").addEventListener("click", () => {
+      dismissBanner("recovery", 1);
+      $("#recovery-banner").classList.add("hidden");
+    });
+    $("#backup-now-btn").addEventListener("click", () => {
+      exportBackup();
+      dismissBanner("backup", 7);
+      $("#backup-banner").classList.add("hidden");
+    });
+    $("#backup-dismiss").addEventListener("click", () => {
+      dismissBanner("backup", 2);
+      $("#backup-banner").classList.add("hidden");
+    });
+    $("#snapshot-list").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-restore-snap]");
+      if (b) restoreSnapshot(Number(b.dataset.restoreSnap));
+    });
+
     // keyboard
     document.addEventListener("keydown", (e) => {
       if (!$("#billing-page").classList.contains("active")) return;
@@ -862,6 +1030,7 @@
     $("#logo-cup").innerHTML = svg("cup", 56, 'style="color:var(--color-primary)"');
     renderProducts();
     renderCart();
+    showRecoveryBanner();
 
     const session = S.readSession();
     if (session) {
