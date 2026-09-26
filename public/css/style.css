@@ -1071,6 +1071,104 @@ body {
 .settings-message.error { background: var(--color-danger-bg); color: var(--color-danger); }
 
 /* ========================================
+   LIVE CONNECTION DOT
+   ======================================== */
+.live-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px var(--color-success-bg);
+  flex-shrink: 0;
+}
+
+.live-dot.off {
+  background: var(--color-gray-400);
+  box-shadow: 0 0 0 3px var(--color-gray-100);
+}
+
+.server-status { display: block; margin-top: 6px; font-size: 0.75rem; }
+
+/* ========================================
+   MANAGEMENT LISTS (products / staff)
+   ======================================== */
+.manage-list { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+.manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  transition: all var(--transition-fast);
+}
+
+.manage-row:hover { box-shadow: var(--shadow-md); border-color: var(--color-primary); }
+.manage-row.disabled-row { opacity: 0.55; }
+
+.manage-main { min-width: 0; flex: 1; }
+.manage-name { font-weight: 700; font-size: 1.02rem; color: var(--text-primary); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.manage-prices { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+
+.chip {
+  background: var(--color-primary-bg);
+  color: var(--color-primary-dark);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.role-badge {
+  background: var(--color-primary);
+  color: var(--color-white);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.role-badge.staff { background: var(--color-info); }
+.role-badge.off { background: var(--color-gray-500); }
+
+.manage-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.icon-btn-sm {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.icon-btn-sm:hover { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-bg); }
+.icon-btn-sm.danger:hover { border-color: var(--color-danger); color: var(--color-danger); background: var(--color-danger-bg); }
+
+.summary-card { background: var(--color-primary-bg); border-color: var(--color-primary); }
+
+/* Compact modal form */
+.form-compact { margin-top: var(--space-md); }
+.form-compact .form-group { margin-bottom: var(--space-md); }
+.form-compact .form-group label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
+.hint { font-weight: 400; color: var(--text-muted); font-size: 0.78rem; }
+.help-text { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: var(--space-md); }
+
+.price-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-sm); }
+.price-row .form-group { margin-bottom: var(--space-sm); }
+
+/* ========================================
    PRINT RECEIPT PAGE
    ======================================== */
 .print-page { background: var(--color-white); }

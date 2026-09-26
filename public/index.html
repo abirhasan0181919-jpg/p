@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Live Fruit Juice - স্টাফ বিলিং</title>
+  <title>Live Fruit Juice — স্টাফ বিলিং</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,78 +16,82 @@
 </head>
 <body>
   <div id="app">
-    <!-- ========== LOGIN PAGE ========== -->
+
+    <!-- ========== LOGIN ========== -->
     <div id="login-page" class="page active">
       <div class="login-container">
         <div class="login-card">
           <div class="logo-section">
-            <div class="logo-icon">🥤</div>
+            <div class="logo-icon" id="logo-cup"></div>
             <h1 class="shop-name"><span class="text-green">Live</span> Fruit Juice</h1>
             <p class="tagline">স্টাফ বিলিং সিস্টেম</p>
           </div>
-          
+
           <form id="login-form" class="login-form">
             <div class="form-group">
               <label for="username">ইউজারনেম</label>
               <div class="input-wrapper">
-                <span class="input-icon">👤</span>
-                <input type="text" id="username" name="username" placeholder="ইউজারনেম লিখুন" required autocomplete="username" autocapitalize="off">
+                <span class="input-icon" data-icon="user"></span>
+                <input type="text" id="username" placeholder="ইউজারনেম লিখুন" required autocomplete="username" autocapitalize="off" spellcheck="false">
               </div>
             </div>
-            
+
             <div class="form-group">
               <label for="password">পাসওয়ার্ড</label>
               <div class="input-wrapper">
-                <span class="input-icon">🔒</span>
-                <input type="password" id="password" name="password" placeholder="পাসওয়ার্ড লিখুন" required autocomplete="current-password">
-                <button type="button" class="toggle-password" aria-label="পাসওয়ার্ড দেখান">👁️</button>
+                <span class="input-icon" data-icon="lock"></span>
+                <input type="password" id="password" placeholder="পাসওয়ার্ড লিখুন" required autocomplete="current-password">
+                <button type="button" class="toggle-password" data-icon="eye" aria-label="পাসওয়ার্ড দেখান"></button>
               </div>
             </div>
-            
+
             <button type="submit" class="btn btn-primary btn-block btn-login">
               <span class="btn-text">লগইন করুন</span>
               <span class="btn-loader hidden">⏳</span>
             </button>
           </form>
-          
+
           <div id="login-error" class="error-message hidden"></div>
-          
+
           <div class="login-footer">
             <p>Live Fruit Juice Billing System v2.0</p>
-            <a href="#" id="setup-link" class="setup-link">সাপ্লাবেস সেটআপ পরিবর্তন করুন</a>
+            <span id="server-status" class="server-status"></span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ========== BILLING PAGE (POS) ========== -->
+    <!-- ========== BILLING (POS) ========== -->
     <div id="billing-page" class="page">
       <header class="top-bar">
         <div class="top-bar-left">
-          <button id="menu-toggle" class="icon-btn" aria-label="মেনু">☰</button>
+          <button id="menu-toggle" class="icon-btn" data-icon="menu" aria-label="মেনু"></button>
           <h1 class="shop-title"><span class="text-green">Live</span> Fruit Juice</h1>
         </div>
         <div class="top-bar-right">
+          <span id="live-dot" class="live-dot" title="সার্ভার সংযোগ"></span>
           <span id="current-user" class="user-badge"></span>
-          <button id="logout-btn" class="icon-btn" aria-label="লগ আউট">🚪</button>
+          <button id="logout-btn" class="icon-btn" data-icon="logout" aria-label="লগ আউট"></button>
         </div>
       </header>
 
       <div class="main-layout">
-        <!-- Sidebar Navigation -->
         <aside id="sidebar" class="sidebar">
           <nav class="nav-menu">
             <a href="#" class="nav-item active" data-page="billing">
-              <span class="nav-icon">🧾</span>
-              <span>বিলিং</span>
+              <span class="nav-icon" data-icon="billing"></span><span>বিলিং</span>
             </a>
             <a href="#" class="nav-item" data-page="today-bills">
-              <span class="nav-icon">📋</span>
-              <span>আজকের বিলসমূহ</span>
+              <span class="nav-icon" data-icon="list"></span><span>আজকের বিলসমূহ</span>
             </a>
-            <a href="#" class="nav-item owner-only" id="nav-settings" data-page="settings" style="display: none;">
-              <span class="nav-icon">⚙️</span>
-              <span>সেটিংস</span>
+            <a href="#" class="nav-item owner-only" data-page="products" style="display:none">
+              <span class="nav-icon" data-icon="cup"></span><span>পণ্য ম্যানেজ</span>
+            </a>
+            <a href="#" class="nav-item owner-only" data-page="staff" style="display:none">
+              <span class="nav-icon" data-icon="users"></span><span>স্টাফ ম্যানেজ</span>
+            </a>
+            <a href="#" class="nav-item owner-only" data-page="settings" style="display:none">
+              <span class="nav-icon" data-icon="settings"></span><span>সেটিংস</span>
             </a>
           </nav>
           <div class="sidebar-footer">
@@ -95,48 +99,40 @@
           </div>
         </aside>
 
-        <!-- Main Content Area -->
         <main id="main-content" class="main-content">
-          
+
           <!-- BILLING VIEW -->
           <section id="billing-view" class="view active">
             <div class="pos-grid">
-              <!-- Products Panel -->
               <div class="products-panel">
                 <div class="panel-header">
                   <h2>পণ্য তালিকা</h2>
                   <div class="search-wrapper">
                     <input type="text" id="product-search" placeholder="পণ্য খুঁজুন..." class="search-input">
-                    <span class="search-icon">🔍</span>
+                    <span class="search-icon" data-icon="search"></span>
                   </div>
                 </div>
                 <div id="products-list" class="products-list"></div>
               </div>
 
-              <!-- Cart Panel -->
               <div class="cart-panel">
                 <div class="panel-header">
                   <h2>কার্ট</h2>
                   <span id="cart-count" class="cart-badge">০ আইটেম</span>
                 </div>
-                <div id="cart-items" class="cart-items">
-                  <div class="empty-cart">
-                    <p>কার্ট খালি</p>
-                    <span>পণ্য যোগ করতে সাইজ বাটনে চাপ দিন</span>
-                  </div>
-                </div>
-                
-                <div class="cart-summary" id="cart-summary" style="display: none;">
+                <div id="cart-items" class="cart-items"></div>
+
+                <div class="cart-summary" id="cart-summary" style="display:none">
                   <div class="summary-row">
                     <label for="customer-name">কাস্টমারের নাম</label>
                     <input type="text" id="customer-name" class="input-field" value="Walk-in Customer" placeholder="কাস্টমারের নাম">
                   </div>
                   <div class="summary-row">
                     <label for="amount-paid">প্রাপ্ত টাকা</label>
-                    <input type="number" id="amount-paid" class="input-field" value="0" placeholder="০" min="0" step="1">
+                    <input type="number" id="amount-paid" class="input-field" value="0" min="0" step="1">
                   </div>
                   <div class="summary-row highlight" id="change-due-row">
-                    <span>বদল/বাকি</span>
+                    <span>ফেরত</span>
                     <span id="change-due" class="change-positive">৳০</span>
                   </div>
                   <div class="summary-row total-row">
@@ -144,7 +140,7 @@
                     <span id="grand-total">৳০</span>
                   </div>
                 </div>
-                
+
                 <button id="complete-bill-btn" class="btn btn-success btn-block btn-lg" disabled>
                   <span>বিল সম্পন্ন করো ও প্রিন্ট করো</span>
                 </button>
@@ -156,10 +152,10 @@
           <section id="today-bills-view" class="view">
             <div class="view-header">
               <h2>আজকের বিলসমূহ</h2>
-              <div class="filter-controls owner-only" id="staff-filter-wrapper" style="display: none;">
-                <label for="staff-filter">স্টাফ ফিল্টার</label>
+              <div class="filter-controls owner-only" id="staff-filter-wrapper" style="display:none">
+                <label for="staff-filter">স্টাফ</label>
                 <select id="staff-filter" class="select-field">
-                  <option value="all">সব স্টাফ</option>
+                  <option value="all">সবাই</option>
                 </select>
               </div>
             </div>
@@ -168,14 +164,32 @@
             </div>
           </section>
 
-          <!-- SETTINGS VIEW (Owner Only) -->
-          <section id="settings-view" class="view owner-only" style="display: none;">
+          <!-- PRODUCTS MANAGEMENT VIEW (owner) -->
+          <section id="products-view" class="view owner-only" style="display:none">
+            <div class="view-header">
+              <h2>পণ্য ম্যানেজমেন্ট</h2>
+              <button id="new-product-btn" class="btn btn-primary">+ নতুন পণ্য</button>
+            </div>
+            <div id="products-manage-list" class="manage-list"></div>
+          </section>
+
+          <!-- STAFF MANAGEMENT VIEW (owner) -->
+          <section id="staff-view" class="view owner-only" style="display:none">
+            <div class="view-header">
+              <h2>স্টাফ ম্যানেজমেন্ট</h2>
+              <button id="new-staff-btn" class="btn btn-primary">+ নতুন স্টাফ</button>
+            </div>
+            <div id="staff-manage-list" class="manage-list"></div>
+          </section>
+
+          <!-- SETTINGS VIEW (owner) -->
+          <section id="settings-view" class="view owner-only" style="display:none">
             <div class="view-header">
               <h2>দোকানের সেটিংস</h2>
             </div>
             <form id="settings-form" class="settings-form">
               <div class="settings-section">
-                <h3>দোকানের তথ্য</h3>
+                <h3>দোকানের তথ্য (রিসিটে দেখাবে)</h3>
                 <div class="form-group">
                   <label for="shop-name">দোকানের নাম *</label>
                   <input type="text" id="shop-name" class="input-field" required placeholder="Live Fruit Juice">
@@ -186,10 +200,10 @@
                 </div>
                 <div class="form-group">
                   <label for="shop-phone">মোবাইল নম্বর *</label>
-                  <input type="tel" id="shop-phone" class="input-field" required placeholder="০১XXXXXXXXXX">
+                  <input type="tel" id="shop-phone" class="input-field" required placeholder="০১XXXXXXXXX">
                 </div>
               </div>
-              
+
               <div class="settings-section">
                 <h3>রিসিট সেটিংস</h3>
                 <div class="form-group">
@@ -207,72 +221,90 @@
               </div>
 
               <button type="submit" class="btn btn-primary btn-block">সেভ করুন</button>
-              <button type="button" id="setup-open" class="btn btn-secondary btn-block" style="margin-top:8px;">
-                Supabase তথ্য পরিবর্তন করুন
-              </button>
             </form>
-            
             <div id="settings-message" class="settings-message hidden"></div>
+
+            <div class="settings-section" style="margin-top:32px">
+              <h3>ব্যাকআপ</h3>
+              <p class="help-text">সব ডেটা একটি JSON ফাইলে আছে। নিয়মিত ব্যাকআপ নিন।</p>
+              <div class="flex gap-sm" style="flex-wrap:wrap">
+                <a class="btn btn-secondary" href="/api/backup" download>ব্যাকআপ ডাউনলোড</a>
+                <label class="btn btn-secondary" style="cursor:pointer;margin:0">
+                  ফাইল থেকে ফিরিয়ে আনুন
+                  <input type="file" id="restore-input" accept="application/json" class="hidden">
+                </label>
+              </div>
+            </div>
           </section>
         </main>
       </div>
 
-      <!-- Overlay for mobile sidebar -->
       <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
     </div>
 
-    <!-- ========== FIRST-RUN SETUP (Supabase config) ========== -->
-    <div id="setup-page" class="page">
-      <div class="login-container">
-        <div class="login-card" style="max-width: 520px;">
-          <div class="logo-section">
-            <div class="logo-icon">🔧</div>
-            <h1 class="shop-name"><span class="text-green">Live</span> Fruit Juice</h1>
-            <p class="tagline">প্রথমবার সেটআপ — Supabase তথ্য দিন</p>
-          </div>
-
-          <div class="setup-note">
-            Supabase → <b>Project Settings → API</b> থেকে <b>Project URL</b> ও
-            <b>anon public key</b> কপি করে নিচে বসান। একবার সেভ করলেই আর লাগবে না।
-          </div>
-
-          <form id="setup-form" class="login-form">
-            <div class="form-group">
-              <label for="setup-url">Supabase Project URL</label>
-              <div class="input-wrapper">
-                <span class="input-icon">🔗</span>
-                <input type="url" id="setup-url" placeholder="https://xxxxxxxxxxxx.supabase.co" required>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label for="setup-key">anon / public key</label>
-              <div class="input-wrapper">
-                <span class="input-icon">🗝️</span>
-                <input type="text" id="setup-key" placeholder="eyJhbGciOi..." required>
-              </div>
-            </div>
-
-            <button type="submit" class="btn btn-primary btn-block">সেভ করে চালু করুন</button>
-            <button type="button" id="setup-reset" class="btn btn-secondary btn-block" style="margin-top:8px;">
-              আবার শুরু করুন
-            </button>
-          </form>
-
-          <div id="setup-error" class="error-message hidden"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== PRINT RECEIPT PAGE ========== -->
+    <!-- ========== PRINT RECEIPT ========== -->
     <div id="print-page" class="page print-page">
-      <div class="receipt-container" id="receipt-container">
-        <!-- Receipt generated dynamically -->
+      <div class="receipt-container" id="receipt-container"></div>
+    </div>
+
+    <!-- ========== PRODUCT EDIT MODAL ========== -->
+    <div id="product-modal" class="modal">
+      <div class="modal-content">
+        <h3 id="product-modal-title">নতুন পণ্য</h3>
+        <form id="product-form" class="form-compact">
+          <div class="form-group">
+            <label for="p-name">পণ্যের নাম *</label>
+            <input type="text" id="p-name" class="input-field" required placeholder="যেমন: আপেল জুস">
+          </div>
+          <div class="price-row">
+            <div class="form-group">
+              <label for="p-s">সাইজ S</label>
+              <input type="number" id="p-s" class="input-field" min="0" step="1" value="0">
+            </div>
+            <div class="form-group">
+              <label for="p-m">সাইজ M</label>
+              <input type="number" id="p-m" class="input-field" min="0" step="1" value="0">
+            </div>
+            <div class="form-group">
+              <label for="p-l">সাইজ L</label>
+              <input type="number" id="p-l" class="input-field" min="0" step="1" value="0">
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" id="p-cancel" class="btn btn-secondary">বাতিল</button>
+            <button type="submit" class="btn btn-primary">সেভ করুন</button>
+          </div>
+        </form>
       </div>
     </div>
 
-    <!-- ========== TOAST NOTIFICATIONS ========== -->
-    <div id="toast-container" class="toast-container"></div>
+    <!-- ========== STAFF EDIT MODAL ========== -->
+    <div id="staff-modal" class="modal">
+      <div class="modal-content">
+        <h3 id="staff-modal-title">নতুন স্টাফ</h3>
+        <form id="staff-form" class="form-compact">
+          <div class="form-group">
+            <label for="s-username">ইউজারনেম *</label>
+            <input type="text" id="s-username" class="input-field" required placeholder="যেমন: rakib" autocapitalize="off" spellcheck="false">
+          </div>
+          <div class="form-group">
+            <label for="s-password">পাসওয়ার্ড <span id="s-pass-hint" class="hint"></span></label>
+            <input type="text" id="s-password" class="input-field" placeholder="কমপক্ষে ৪ অক্ষর">
+          </div>
+          <div class="form-group">
+            <label for="s-role">ভূমিকা</label>
+            <select id="s-role" class="select-field" style="width:100%">
+              <option value="staff">স্টাফ (শুধু নিজের বিল)</option>
+              <option value="owner">ওনার (সবকিছু দেখবেন)</option>
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button type="button" id="s-cancel" class="btn btn-secondary">বাতিল</button>
+            <button type="submit" class="btn btn-primary">সেভ করুন</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <!-- ========== CONFIRM MODAL ========== -->
     <div id="confirm-modal" class="modal">
@@ -285,15 +317,10 @@
         </div>
       </div>
     </div>
+
+    <div id="toast-container" class="toast-container"></div>
   </div>
 
-  <!-- Supabase Client -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Crypto-JS for SHA256 (fallback if WebCrypto unavailable) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-  <!-- আপনার Supabase তথ্য এখানে বসান -->
-  <script src="config.js"></script>
-  <!-- App Script -->
   <script src="js/app.js"></script>
 </body>
 </html>
