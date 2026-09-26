@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Fruit Juice - Staff Billing</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <div id="login-page" class="page active">
+      <div class="header">
+        <h1><span style="color: #2d5a2c;">Live</span> Fruit Juice</h1>
+      </div>
+      <div class="login-card">
+        <h2>employee login</h2>
+        <form id="login-form">
+          <div class="form-group">
+            <label for="username"> ইউজারনেম</label>
+            <input type="text" id="username" name="username" required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="password"> পাসওয়ার্ড</label>
+            <input type="password" id="password" name="password" required autocomplete="off">
+          </div>
+          <button type="submit" class="btn-login">লগইন করুন</button>
+        </form>
+        <div id="login-error" class="error-message"></div>
+      </div>
+    </div>
+
+    <div id="billing-page" class="page">
+      <div class="header">
+        <h1><span style="color: #2d5a2c;">Live</span> Fruit Juice</h1>
+        <span id="logged-in-user">স্বাগতম, employee</span>
+        <button id="logout-btn" class="btn-logout">লগ আউট</button>
+      </div>
+
+      <div class="main-content">
+        <div id="products-section" class="section">
+          <h2>পণ্য নির্বাচন</h2>
+          <div id="products-list" class="products-grid"></div>
+        </div>
+
+        <div id="cart-section" class="section" style="display: none;">
+          <h2>কার্ট</h2>
+          <div id="cart-items" class="cart-items"></div>
+          <div class="cart-footer">
+            <div id="grand-total">Total: ₹0</div>
+            <div>
+              <label for="customer-name">কাস্টমারের নাম</label>
+              <input type="text" id="customer-name" class="input-field" value="Walk-in Customer">
+            </div>
+            <div>
+              <label for="amount-paid">কত টাকা দিয়েছেন</label>
+              <input type="number" id="amount-paid" class="input-field" value="0">
+            </div>
+            <div id="change-due" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+              Change: <span style="color: #2d5a2c;">₹0</span>
+            </div>
+          </div>
+          <button id="complete-bill-btn" class="btn-complete">বিল সম্পন্ন করো ও প্রিন্ট করো</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="print-page" class="page">
+      <div class="print-container" id="receipt-container">
+        <!-- Print receipt will be generated here -->
+      </div>
+    </div>
+
+    <div id="today-bills-page" class="page" style="display: none;">
+      <div class="header">
+        <h1><span style="color: #2d5a2c;">Live</span> Fruit Juice</h1>
+        <button id="back-to-billing" class="btn-logout">বিলিং পু<Game</button>
+      </div>
+      <div class="bills-list" id="bills-list"></div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
