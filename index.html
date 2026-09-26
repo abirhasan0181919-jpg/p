@@ -120,17 +120,12 @@
                 </div>
                 <div id="cart-items" class="cart-items">
                   <div class="empty-cart">
-                    <div class="empty-icon">🛒</div>
                     <p>কার্ট খালি</p>
-                    <span>পণ্য যোগ করতে ক্লিক করুন</span>
+                    <span>পণ্য যোগ করতে সাইজ বাটনে চাপ দিন</span>
                   </div>
                 </div>
                 
                 <div class="cart-summary" id="cart-summary" style="display: none;">
-                  <div class="summary-row">
-                    <span>সর্বমোট</span>
-                    <span id="subtotal">₹০</span>
-                  </div>
                   <div class="summary-row">
                     <label for="customer-name">কাস্টমারের নাম</label>
                     <input type="text" id="customer-name" class="input-field" value="Walk-in Customer" placeholder="কাস্টমারের নাম">
@@ -141,16 +136,15 @@
                   </div>
                   <div class="summary-row highlight" id="change-due-row">
                     <span>বদল/বাকি</span>
-                    <span id="change-due" class="change-positive">₹০</span>
+                    <span id="change-due" class="change-positive">৳০</span>
                   </div>
                   <div class="summary-row total-row">
-                    <span>মোট টাকা</span>
-                    <span id="grand-total">₹০</span>
+                    <span>সর্বমোট</span>
+                    <span id="grand-total">৳০</span>
                   </div>
                 </div>
                 
                 <button id="complete-bill-btn" class="btn btn-success btn-block btn-lg" disabled>
-                  <span class="btn-icon">🖨️</span>
                   <span>বিল সম্পন্ন করো ও প্রিন্ট করো</span>
                 </button>
               </div>
@@ -234,7 +228,7 @@
     <div id="toast-container" class="toast-container"></div>
 
     <!-- ========== CONFIRM MODAL ========== -->
-    <div id="confirm-modal" class="modal hidden">
+    <div id="confirm-modal" class="modal">
       <div class="modal-content">
         <h3 id="modal-title">নিশ্চিত করুন</h3>
         <p id="modal-message">আপনি কি নিশ্চিত?</p>
@@ -248,8 +242,10 @@
 
   <!-- Supabase Client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Crypto-JS for SHA256 -->
+  <!-- Crypto-JS for SHA256 (fallback if WebCrypto unavailable) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <!-- আপনার Supabase তথ্য এখানে বসান -->
+  <script src="config.js"></script>
   <!-- App Script -->
   <script src="js/app.js"></script>
 </body>

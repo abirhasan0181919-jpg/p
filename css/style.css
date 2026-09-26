@@ -586,14 +586,10 @@ body {
   background: rgba(0,0,0,0.5);
   z-index: 35;
   opacity: 0;
-  visibility: hidden;
-  transition: all var(--transition-normal);
+  transition: opacity var(--transition-normal);
 }
 
-.sidebar-overlay.visible {
-  opacity: 1;
-  visibility: visible;
-}
+.sidebar-overlay.visible { opacity: 1; }
 
 /* ========================================
    POS GRID - BILLING VIEW
@@ -1053,6 +1049,7 @@ body {
    PRINT RECEIPT PAGE
    ======================================== */
 .print-page { background: var(--color-white); }
+.print-page.active { display: block; }
 
 .receipt-container {
   width: 100%;
